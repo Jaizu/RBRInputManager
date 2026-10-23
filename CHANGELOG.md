@@ -2,7 +2,7 @@
 
 All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-10-23
 
 ### Added
 - **Secondary gear up/down**: with NGPCarMenu's `SecondaryGearUpDownControls` on (the default) and a steering
@@ -94,6 +94,7 @@ First release.
 - Self-updater from GitHub releases.
 - Light and dark theme.
 
+[0.4.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jaizu/RBRInputManager/releases/tag/v0.1.0
