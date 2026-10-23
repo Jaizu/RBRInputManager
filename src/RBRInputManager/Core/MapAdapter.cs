@@ -52,6 +52,7 @@ public static class MapAdapter
 
         var bindings = new List<ActionBinding>();
         var dropped = new List<string>();
+        bool secondaryGears = RbrActions.HasSecondaryGears(map, rbr.SecondaryGearControls);
         foreach (var b in map.Bindings)
         {
             if (indexMap.TryGetValue(b.DeviceIndex, out int t))
@@ -59,7 +60,7 @@ public static class MapAdapter
             else
             {
                 string dev = b.DeviceIndex >= 0 && b.DeviceIndex < map.Devices.Count ? nameOf(map.Devices[b.DeviceIndex]) : "unknown device";
-                dropped.Add($"{RbrActions.Get(b.ActionId).Name} ({dev})");
+                dropped.Add($"{RbrActions.Get(b.ActionId, secondaryGears).Name} ({dev})");
             }
         }
 

@@ -40,4 +40,23 @@ public static class RbrActions
 
     public static RbrAction Get(int id) =>
         id >= 0 && id < All.Count ? All[id] : new RbrAction(id, $"ACTION_{id}", $"Unknown action #{id}", false, null);
+
+    /// <summary>
+    /// NGPCarMenu (SecondaryGearUpDownControls, on by default) turns the digital Left/Right slots into a second
+    /// pair of gear up/down controls while an analog steering axis is bound. RBR's control screen then shows them
+    /// as "Gear Up (Secondary)" / "Gear Down (Secondary)" in place of Left / Right.
+    /// </summary>
+    public static readonly RbrAction SecondaryGearUp = new(1, "LEFT", "Gear up (secondary)", false, null);
+    public static readonly RbrAction SecondaryGearDown = new(2, "RIGHT", "Gear down (secondary)", false, null);
+
+    /// <summary>True when RBR (with NGPCarMenu's option on) reads Left/Right of this map as secondary gear controls.</summary>
+    public static bool HasSecondaryGears(ActionMap map, bool pluginEnabled) =>
+        pluginEnabled && map.Bindings.Any(b => b.ActionId == 0);
+
+    public static RbrAction Get(int id, bool secondaryGears) => (secondaryGears, id) switch
+    {
+        (true, 1) => SecondaryGearUp,
+        (true, 2) => SecondaryGearDown,
+        _ => Get(id),
+    };
 }

@@ -71,6 +71,7 @@ public sealed class RbrInstallation
     public const string LauncherIniFile = @"rsf_launcher\Configs\default.ini";
     public const string RbrControlsIniFile = @"Plugins\RBRControls\RBRControls.ini";
     public const string PersonalIniFile = "rallysimfans_personal.ini";
+    public const string NgpCarMenuIniFile = @"Plugins\NGPCarMenu.ini";
 
     /// <summary>Files backed up on first run and restorable with "Restore originals".</summary>
     public IReadOnlyList<string> ManagedFiles =>
@@ -83,6 +84,10 @@ public sealed class RbrInstallation
     public string RbrControlsIni => Path(RbrControlsIniFile);
     public string Acm => Path(AcmFile);
     public string ProfileRbr => Path(ProfileFile);
+
+    /// <summary>NGPCarMenu's SecondaryGearUpDownControls (default on); false without the plugin's INI.</summary>
+    public bool SecondaryGearControls =>
+        IniFile.TryLoad(Path(NgpCarMenuIniFile)) is { } ini && ini.Get("Default", "SecondaryGearUpDownControls") != "0";
 
     /// <summary>Names of RBR / RSF launcher processes currently running (writing files under them is unsafe).</summary>
     public static IReadOnlyList<string> RunningGameProcesses()

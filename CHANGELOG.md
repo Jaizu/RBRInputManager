@@ -4,6 +4,12 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
 
 ## [Unreleased]
 
+### Added
+- **Secondary gear up/down**: with NGPCarMenu's `SecondaryGearUpDownControls` on (the default) and a steering
+  axis bound, RBR uses the Steer left / Steer right slots as Gear Up (Secondary) / Gear Down (Secondary). The
+  app now names and binds them that way, like RBR's control screen, and the live display no longer treats them
+  as steering.
+
 ### Fixed
 - **RBR stuck loading the profile**: "Set to 100%" for the in-game force feedback strength patched
   pf<PROFILE>.rbr without updating the four checksum bytes at its start, so RBR rejected the profile and kept

@@ -36,6 +36,7 @@ public static class MapCopier
 
         var copied = new List<ActionBinding>();
         var skipped = new List<string>();
+        bool secondaryGears = RbrActions.HasSecondaryGears(source, rbr.SecondaryGearControls);
         foreach (var b in source.Bindings)
         {
             if (deviceMap.TryGetValue(b.DeviceIndex, out int t))
@@ -43,7 +44,7 @@ public static class MapCopier
             else
             {
                 string dev = b.DeviceIndex >= 0 && b.DeviceIndex < source.Devices.Count ? nameOf(source.Devices[b.DeviceIndex]) : "unknown device";
-                skipped.Add($"{RbrActions.Get(b.ActionId).Name} ({dev})");
+                skipped.Add($"{RbrActions.Get(b.ActionId, secondaryGears).Name} ({dev})");
             }
         }
 

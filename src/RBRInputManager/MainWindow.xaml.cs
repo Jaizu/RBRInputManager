@@ -48,6 +48,7 @@ public partial class MainWindow : FluentWindow
     private int _pageBeforeSettings = 1; // Game controls (tab 0 is Info)
     private readonly System.Windows.Threading.DispatcherTimer _liveTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private HashSet<int> _invertedActions = new();
+    private bool _ngpSecondaryGears;
 
     static MainWindow()
     {
@@ -188,6 +189,7 @@ public partial class MainWindow : FluentWindow
         }
 
         _editor = null;
+        _ngpSecondaryGears = _rbr.SecondaryGearControls;
         Try("Controls", LoadGameBindings);
         Try("RBRControls", LoadPlugin);
         if (_acm is not null)
@@ -254,7 +256,8 @@ public partial class MainWindow : FluentWindow
         var indexed = map.Bindings.Select((b, i) => (b, i)).ToList();
 
         var rows = new List<GameBindingRow>();
-        foreach (var action in RbrActions.All)
+        bool secondaryGears = RbrActions.HasSecondaryGears(map, _ngpSecondaryGears);
+        foreach (var action in RbrActions.All.Select(a => RbrActions.Get(a.Id, secondaryGears)))
         {
             var binds = indexed.Where(x => x.b.ActionId == action.Id).ToList();
             string inverted = action.InvertKey is null ? "" :
@@ -460,7 +463,8 @@ public partial class MainWindow : FluentWindow
     private void BindAction(GameBindingRow? row, bool add)
     {
         if (row is null || _editor is null || ShownMapIndex is not int map) return;
-        var action = RbrActions.Get(row.ActionId);
+        bool secondaryGears = RbrActions.HasSecondaryGears(_editor.Maps[map], _ngpSecondaryGears);
+        var action = RbrActions.Get(row.ActionId, secondaryGears);
         string what = action.Accepts switch
         {
             InputKind.Axis => "Move an axis",
@@ -473,7 +477,7 @@ public partial class MainWindow : FluentWindow
             var removeFrom = new List<int>();
             if (conflicts.Count > 0)
             {
-                string names = string.Join(", ", conflicts.Select(c => RbrActions.Get(c).Name));
+                string names = string.Join(", ", conflicts.Select(c => RbrActions.Get(c, secondaryGears).Name));
                 var choice = await Ask("Input already in use", $"{input.DeviceName} · {input.Label} is already bound to {names}.",
                     "Move it here", "Use it for both");
                 if (choice == MessageBoxResult.None) return;
@@ -646,7 +650,10 @@ public partial class MainWindow : FluentWindow
 
         // The combined axis rests in the middle: one half throttle, the other brake.
         double? combined = Level(4);
-        double? steerAxis = Level(0, axesOnly: true), left = Level(1), right = Level(2);
+        // With NGPCarMenu's secondary gear controls, Left/Right are gear buttons and don't steer.
+        bool secondaryGears = RbrActions.HasSecondaryGears(map, _ngpSecondaryGears);
+        double? steerAxis = Level(0, axesOnly: true);
+        double? left = secondaryGears ? null : Level(1), right = secondaryGears ? null : Level(2);
         double? steering = steerAxis is null && left is null && right is null
             ? null
             : Math.Clamp((steerAxis is double s ? s * 2 - 1 : 0) - (left ?? 0) + (right ?? 0), -1, 1);
