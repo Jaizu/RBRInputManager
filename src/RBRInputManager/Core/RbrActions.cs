@@ -1,6 +1,11 @@
 namespace RBRInputManager.Core;
 
-public sealed record RbrAction(int Id, string Code, string Name, bool IsAnalog, string? InvertKey);
+public sealed record RbrAction(int Id, string Code, string Name, bool IsAnalog, string? InvertKey)
+{
+    /// <summary>What can be bound: steering and the combined pedal need an axis, pedals take either, the rest buttons/keys.</summary>
+    public InputKind Accepts => Code is "STEERING" or "ACCELERATE_AND_BRAKE" ? InputKind.Axis
+        : IsAnalog ? InputKind.Any : InputKind.Button;
+}
 
 /// <summary>
 /// Action IDs as used in pf*.acm. The order comes from the CActionMap switch in

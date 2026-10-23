@@ -9,6 +9,22 @@ public static class GameFiles
     // RBR's INIs are plain ANSI; Latin-1 round-trips every byte unchanged.
     private static readonly Encoding Ansi = Encoding.Latin1;
 
+    public static readonly string BackupsDir = Path.Combine(AppSettings.DataDir, "Backups");
+
+    /// <summary>
+    /// Copies a game file to %AppData%\RBRInputManager\Backups\&lt;timestamp&gt;\ before the app changes it.
+    /// Returns the backup path. The copy is left writable so the folder can be cleaned up normally.
+    /// </summary>
+    public static string Backup(RbrInstallation rbr, string relativePath)
+    {
+        string dir = Path.Combine(BackupsDir, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
+        string dst = Path.Combine(dir, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+        File.Copy(rbr.Path(relativePath), dst, overwrite: true);
+        File.SetAttributes(dst, FileAttributes.Normal);
+        return dst;
+    }
+
     /// <summary>
     /// Overwrites the contents in place (truncate + write) so the existing file keeps its ACL,
     /// owner and creation time. A read-only attribute is lifted for the write and put back.

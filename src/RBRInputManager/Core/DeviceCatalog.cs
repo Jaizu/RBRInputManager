@@ -26,6 +26,7 @@ public sealed class DeviceCatalog : IDisposable
     public string? DirectInputError { get; }
 
     public IReadOnlyCollection<DeviceInstance> Attached => _attached.Values;
+    public IReadOnlyCollection<Guid> AttachedGuids => _attached.Keys;
 
     public DeviceCatalog()
     {

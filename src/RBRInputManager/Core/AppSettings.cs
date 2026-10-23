@@ -16,6 +16,10 @@ public sealed class AppSettings
 
     public string? RbrPath { get; set; }
     public ThemePreference Theme { get; set; } = ThemePreference.System;
+    /// <summary>Name of the profile last saved or applied to the game (shown as "Current").</summary>
+    public string? CurrentProfile { get; set; }
+    /// <summary>Jump to where an input is bound when it is pressed while the app is in the foreground.</summary>
+    public bool LocateInputs { get; set; } = true;
 
     public static AppSettings Load()
     {

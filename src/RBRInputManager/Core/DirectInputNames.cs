@@ -18,7 +18,8 @@ public static class DirectInputNames
 
         string ff = (dwType & FfActuator) != 0 ? " · FFB" : "";
         if ((dwType & AxisMask) != 0) return $"Axis {n}{ff}";
-        if ((dwType & ButtonMask) != 0) return $"Button {n + 1}";
+        // 0-based, like DirectInput's own names ("Button 0") and RBRControls ("#0").
+        if ((dwType & ButtonMask) != 0) return $"Button {n}";
         if ((dwType & Pov) != 0) return $"POV {n}";
         return $"Object 0x{dwType:X8}";
     }

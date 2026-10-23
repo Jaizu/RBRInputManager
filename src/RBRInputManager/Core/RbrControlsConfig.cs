@@ -113,7 +113,7 @@ public static partial class RbrControlsConfig
     {
         if (raw.Length == 0) return ("", "");
         var m = ButtonBind().Match(raw);
-        if (m.Success) return (m.Groups[2].Value, $"Button {int.Parse(m.Groups[1].Value) + 1}");
+        if (m.Success) return (m.Groups[2].Value, $"Button {m.Groups[1].Value}");
         m = KeyBind().Match(raw);
         if (m.Success) return (KeyboardDevice, $"Key {DirectInputNames.KeyName(int.Parse(m.Groups[1].Value))}");
         return ("", raw);

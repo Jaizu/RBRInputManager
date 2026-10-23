@@ -25,8 +25,17 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           dotnet publish src/RBRInputManager/RBRInputManager.csproj -c Release -o publish -p:Version=$version
 
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $m = [regex]::Match($changelog, "(?ms)^## \[$([regex]::Escape($version))\][^\n]*\n(.*?)(?=^## \[|^\[[^\]]+\]:)")
+          if (-not $m.Success) { throw "CHANGELOG.md has no section for $version" }
+          $m.Groups[1].Value.Trim() | Set-Content notes.md -Encoding utf8
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: publish/RBRInputManager.exe
-          generate_release_notes: true
+          body_path: notes.md

@@ -27,6 +27,7 @@ public sealed class RbrInstallation
 
     // Files the app reads and may write, relative to the install root.
     public const string AcmFile = @"SavedGames\pf" + RsfProfile + ".acm";
+    public const string ProfileFile = @"SavedGames\pf" + RsfProfile + ".rbr";
     public const string GameIniFile = "RichardBurnsRally.ini";
     public const string InputIniFile = "input.ini";
     public const string LauncherIniFile = @"rsf_launcher\Configs\default.ini";
@@ -43,6 +44,7 @@ public sealed class RbrInstallation
     public string LauncherIni => Path(LauncherIniFile);
     public string RbrControlsIni => Path(RbrControlsIniFile);
     public string Acm => Path(AcmFile);
+    public string ProfileRbr => Path(ProfileFile);
 
     /// <summary>Names of RBR / RSF launcher processes currently running (writing files under them is unsafe).</summary>
     public static IReadOnlyList<string> RunningGameProcesses()

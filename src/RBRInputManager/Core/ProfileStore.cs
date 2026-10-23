@@ -109,10 +109,14 @@ public static class ProfileStore
         if (File.Exists(rbr.Acm))
         {
             var acm = ActionMapFile.Load(rbr.Acm);
-            var used = acm.Bindings.Select(b => b.DeviceIndex).Distinct()
-                .Where(i => i >= 0 && i < acm.Devices.Count).Select(i => acm.Devices[i]);
-            profile.Devices = used.Select(g => devices.Resolve(g).Name).Distinct().ToList();
-            profile.BindingCount = acm.Bindings.Count;
+            // Summarize the map RBR would use with the devices connected now.
+            if ((acm.ActiveMap(devices.AttachedGuids) ?? acm.Maps.LastOrDefault()) is { } map)
+            {
+                var used = map.Bindings.Select(b => b.DeviceIndex).Distinct()
+                    .Where(i => i >= 0 && i < map.Devices.Count).Select(i => map.Devices[i]);
+                profile.Devices = used.Select(g => devices.Resolve(g).Name).Distinct().ToList();
+                profile.BindingCount = map.Bindings.Count;
+            }
         }
 
         File.WriteAllText(Path.Combine(dir, "profile.json"), JsonSerializer.Serialize(profile, Json));
@@ -142,6 +146,25 @@ public static class ProfileStore
         if (File.Exists(rbr.LauncherIni))
             GameFiles.SetIniValues(rbr.LauncherIni,
                 values.Select(v => ("RichardBurnsRally", $"{v.Item1}.{v.Item2}", v.Value)), onlyExistingKeys: true);
+    }
+
+    /// <summary>True when the game files hold exactly what the profile would write.</summary>
+    public static bool MatchesGame(RbrInstallation rbr, InputProfile profile)
+    {
+        foreach (var (stored, game) in Files)
+        {
+            string src = Path.Combine(profile.Dir, stored), dst = rbr.Path(game);
+            if (!File.Exists(src)) continue;
+            if (!File.Exists(dst) || !File.ReadAllBytes(src).AsSpan().SequenceEqual(File.ReadAllBytes(dst))) return false;
+        }
+
+        var gameIni = IniFile.TryLoad(rbr.GameIni);
+        foreach (var (key, value) in profile.Ffb)
+        {
+            int dot = key.IndexOf('.');
+            if (!string.Equals(gameIni?.Get(key[..dot], key[(dot + 1)..]), value, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
     }
 
     public static void Delete(InputProfile profile)

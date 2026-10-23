@@ -6,11 +6,12 @@ RBR stores controller bindings by DirectInput *instance GUID*. When Windows give
 
 ## Features
 
-- **Game controls**: every RBR action with its device, input and axis inversion (`SavedGames\pfMULLIGATAWNY.acm`, `input.ini`), plus a green/red status dot for each device.
-- **Force feedback**: values from `RichardBurnsRally.ini` next to the RSF launcher's copy (`rsf_launcher\Configs\default.ini`), plus any per-car overrides.
+- **Game controls**: every RBR action with its device, input and axis inversion (`SavedGames\pfMULLIGATAWNY.acm`, `input.ini`), plus a green/red status dot for each device. RBR keeps one control map per set of connected controllers; the app shows them all, marks the active one and can copy an old map into it.
+- **Binding editor**: bind game actions and RBRControls functions by pressing a button/key or moving an axis. Edits stay pending until *Save to game* (backed up and verified).
+- **Find by pressing**: with the app in front, press any input to jump to where it is bound.
 - **RBRControls**: JoyKey and HShifter binds and options (`Plugins\RBRControls\RBRControls.ini`).
-- **Devices**: controllers DirectInput sees right now.
-- **Profiles**: save the current bindings, axis inversion, RBRControls binds and FFB as a named profile and apply it later.
+- **Force feedback**: the in-game strength slider (warns when it isn't at 100%), plus values from `RichardBurnsRally.ini` next to the RSF launcher's copy (`rsf_launcher\Configs\default.ini`) and any per-car overrides.
+- **Profiles**: save the current bindings, axis inversion, RBRControls binds and FFB as a named profile; switch from the header selector, which also shows when the game no longer matches.
 - **Original files backup**: the first time the app opens an install, it copies the files it can modify, along with their permissions, attributes and timestamps. **Settings → Restore originals** puts them back.
 - **Updates**: checks GitHub releases on startup and can update itself.
 - Windows 11 (Fluent / Mica) look with light and dark themes.
@@ -32,7 +33,7 @@ dotnet publish src/RBRInputManager -c Release -o publish
 
 ## Releasing
 
-Push a version tag; GitHub Actions builds the exe and creates the release:
+Add a section for the version to [CHANGELOG.md](CHANGELOG.md) (it becomes the release notes), then push a version tag; GitHub Actions builds the exe and creates the release:
 
 ```
 git tag v0.2.0
