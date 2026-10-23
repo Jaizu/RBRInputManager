@@ -31,12 +31,12 @@ public static class ProfileStore
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
     // Profile file name -> path in the install.
-    private static readonly (string Stored, string Game)[] Files =
-    {
-        ("controls.acm", RbrInstallation.AcmFile),
+    private static (string Stored, string Game)[] Files(RbrInstallation rbr) =>
+    [
+        ("controls.acm", rbr.AcmFile),
         ("input.ini", RbrInstallation.InputIniFile),
         ("RBRControls.ini", RbrInstallation.RbrControlsIniFile),
-    };
+    ];
 
     public static readonly (string Section, string Key)[] FfbKeys =
     {
@@ -71,7 +71,27 @@ public static class ProfileStore
     public static bool Exists(string name) => LoadAll().Any(p => string.Equals(p.Name, name, StringComparison.CurrentCultureIgnoreCase));
 
     /// <summary>Saves the current game setup as a profile (creating it or overwriting one with the same name).</summary>
-    public static InputProfile SaveCurrent(RbrInstallation rbr, string name, DeviceCatalog devices)
+    public static InputProfile SaveCurrent(RbrInstallation rbr, string name, DeviceCatalog devices) =>
+        Save(rbr, name, devices, rbr.Path);
+
+    /// <summary>
+    /// Creates the built-in "Default" profile from the original game files (the first-run backup)
+    /// if it doesn't exist yet. Returns false when there is no backup to build it from.
+    /// </summary>
+    public static bool EnsureDefault(RbrInstallation rbr, DeviceCatalog devices)
+    {
+        if (Exists(DefaultName)) return true;
+        if (OriginalBackup.Load(rbr.Root) is null) return false;
+        Save(rbr, DefaultName, devices, rel => OriginalBackup.OriginalFile(rbr.Root, rel));
+        return true;
+    }
+
+    public const string DefaultName = "Default";
+
+    public static bool IsDefault(InputProfile p) => string.Equals(p.Name, DefaultName, StringComparison.CurrentCultureIgnoreCase);
+
+    /// <param name="source">Maps a game file (relative to the install) to the file to read it from, or null if it doesn't exist.</param>
+    private static InputProfile Save(RbrInstallation rbr, string name, DeviceCatalog devices, Func<string, string?> source)
     {
         name = name.Trim();
         if (name.Length == 0) throw new ArgumentException("The profile needs a name.");
@@ -80,11 +100,12 @@ public static class ProfileStore
         string dir = existing?.Dir ?? UniqueDir(name);
         Directory.CreateDirectory(dir);
 
-        foreach (var (stored, game) in Files)
+        foreach (var (stored, game) in Files(rbr))
         {
-            string src = rbr.Path(game), dst = Path.Combine(dir, stored);
+            string? src = source(game);
+            string dst = Path.Combine(dir, stored);
             if (File.Exists(dst)) File.SetAttributes(dst, FileAttributes.Normal);
-            if (File.Exists(src))
+            if (src is not null && File.Exists(src))
             {
                 File.Copy(src, dst, true);
                 // The game's .acm is often read-only; the profile copy must stay writable/deletable.
@@ -101,14 +122,14 @@ public static class ProfileStore
             Dir = dir,
         };
 
-        var gameIni = IniFile.TryLoad(rbr.GameIni);
+        var gameIni = source(RbrInstallation.GameIniFile) is { } ini ? IniFile.TryLoad(ini) : null;
         foreach (var (section, key) in FfbKeys)
             if (gameIni?.Get(section, key) is { } v)
                 profile.Ffb[$"{section}.{key}"] = v;
 
-        if (File.Exists(rbr.Acm))
+        if (source(rbr.AcmFile) is { } acmPath && File.Exists(acmPath))
         {
-            var acm = ActionMapFile.Load(rbr.Acm);
+            var acm = ActionMapFile.Load(acmPath);
             // Summarize the map RBR would use with the devices connected now.
             if ((acm.ActiveMap(devices.AttachedGuids) ?? acm.Maps.LastOrDefault()) is { } map)
             {
@@ -126,7 +147,7 @@ public static class ProfileStore
     /// <summary>Writes a profile into the game. Files keep their existing permissions.</summary>
     public static void Apply(RbrInstallation rbr, InputProfile profile)
     {
-        foreach (var (stored, game) in Files)
+        foreach (var (stored, game) in Files(rbr))
         {
             string src = Path.Combine(profile.Dir, stored);
             if (File.Exists(src)) GameFiles.WriteInPlace(rbr.Path(game), File.ReadAllBytes(src));
@@ -151,7 +172,7 @@ public static class ProfileStore
     /// <summary>True when the game files hold exactly what the profile would write.</summary>
     public static bool MatchesGame(RbrInstallation rbr, InputProfile profile)
     {
-        foreach (var (stored, game) in Files)
+        foreach (var (stored, game) in Files(rbr))
         {
             string src = Path.Combine(profile.Dir, stored), dst = rbr.Path(game);
             if (!File.Exists(src)) continue;

@@ -38,6 +38,13 @@ public static class OriginalBackup
         return File.Exists(path) ? JsonSerializer.Deserialize<BackupManifest>(File.ReadAllText(path)) : null;
     }
 
+    /// <summary>The saved original copy of a game file, or null if there is no backup or the file didn't exist then.</summary>
+    public static string? OriginalFile(string rbrRoot, string relativePath)
+    {
+        var f = Load(rbrRoot)?.Files.FirstOrDefault(f => string.Equals(f.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase));
+        return f is { Existed: true } ? Path.Combine(DirFor(rbrRoot), "files", relativePath) : null;
+    }
+
     /// <summary>Creates the snapshot if this install has none yet. Returns the new manifest, or null if one already existed.</summary>
     public static BackupManifest? EnsureCreated(RbrInstallation rbr, string appVersion)
     {
@@ -49,7 +56,7 @@ public static class OriginalBackup
         Directory.CreateDirectory(staging);
 
         var files = new List<BackedUpFile>();
-        foreach (var rel in RbrInstallation.ManagedFiles)
+        foreach (var rel in rbr.ManagedFiles)
         {
             var src = new FileInfo(rbr.Path(rel));
             if (!src.Exists)

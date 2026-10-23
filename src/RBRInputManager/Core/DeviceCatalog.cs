@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Win32;
 using Vortice.DirectInput;
 
@@ -5,7 +6,24 @@ namespace RBRInputManager.Core;
 
 public sealed record DeviceInfo(Guid InstanceGuid, string Name, string? VidPid, bool Connected, string Source)
 {
-    public string Status => Connected ? "Connected" : "Not connected";
+    /// <summary>Last time Windows saw this VID/PID attached or removed (only looked up when not connected).</summary>
+    public DateTime? LastSeen => Connected || VidPid is null ? null : UsbHistory.LastSeen(VidPid);
+
+    /// <summary>Not connected, but Windows saw it within the last month.</summary>
+    public bool RecentlySeen => LastSeen is { } t && DateTime.Now - t < TimeSpan.FromDays(30);
+
+    public string Status => Connected ? "Connected"
+        : LastSeen is { } t ? $"Not connected · last seen {t.ToString("d MMM yyyy, HH:mm", CultureInfo.InvariantCulture)} ({Ago(t)})"
+        : "Not connected · never seen on this PC";
+
+    private static string Ago(DateTime t)
+    {
+        var span = DateTime.Now - t;
+        if (span.TotalHours < 1) return "just now";
+        if (span.TotalDays < 1) return $"{(int)span.TotalHours} h ago";
+        int days = (int)span.TotalDays;
+        return days == 1 ? "yesterday" : days < 60 ? $"{days} days ago" : $"{days / 30} months ago";
+    }
 }
 
 /// <summary>
@@ -41,6 +59,7 @@ public sealed class DeviceCatalog : IDisposable
             DirectInputError = ex.Message;
         }
         LoadRegistry();
+        UsbHistory.Reset();
     }
 
     private void LoadRegistry()
@@ -88,6 +107,20 @@ public sealed class DeviceCatalog : IDisposable
             return new(guid, name, vidPid, false, "Registry");
         }
         return new(guid, "Unknown device", null, false, "—");
+    }
+
+    /// <summary>
+    /// Resolves a device known only by name (RBRControls binds). Disconnected devices are matched
+    /// against the OEM names of every VID/PID DirectInput remembers.
+    /// </summary>
+    public DeviceInfo ResolveName(string name)
+    {
+        if (_attached.Values.FirstOrDefault(d => string.Equals(d.InstanceName.Trim(), name, StringComparison.OrdinalIgnoreCase)) is { } inst)
+            return new(inst.InstanceGuid, name, _registry.GetValueOrDefault(inst.InstanceGuid).VidPid, true, "DirectInput");
+
+        string? vidPid = _registry.Values.Select(r => r.VidPid).Distinct()
+            .FirstOrDefault(v => string.Equals(OemName(v), name, StringComparison.OrdinalIgnoreCase));
+        return new(Guid.Empty, name, vidPid, false, vidPid is null ? "—" : "Registry");
     }
 
     /// <summary>Real object name ("X Axis", "Button 3"...) when the device is connected.</summary>

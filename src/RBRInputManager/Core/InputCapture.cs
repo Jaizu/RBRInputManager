@@ -43,6 +43,9 @@ public sealed class InputCapture : IDisposable
         public bool[] BaseButtons = Array.Empty<bool>();
         // Monitor mode: an axis fires once when it leaves its rest position and re-arms when it returns.
         public bool[] Armed = Array.Empty<bool>();
+        // Last state read by the polling thread, for the live input display.
+        public volatile int[]? LastAxes;
+        public volatile bool[]? LastButtons;
     }
 
     // JoystickState axis fields in order. Object offsets in the data format Vortice builds are not the
@@ -57,6 +60,7 @@ public sealed class InputCapture : IDisposable
     private readonly Dispatcher _ui = Dispatcher.CurrentDispatcher;
     private IDirectInputDevice8? _keyboard;
     private HashSet<Key> _baseKeys = new();
+    private volatile HashSet<Key> _lastKeys = new();
     private InputKind _accept;
     private bool _monitor;
     private Thread? _thread;
@@ -231,6 +235,33 @@ public sealed class InputCapture : IDisposable
         return hit;
     }
 
+    // ---------------------------------------------------------------- live values (monitor thread's last poll)
+
+    /// <summary>Last polled position of an axis as 0..1, or null when the device or axis isn't open.</summary>
+    public double? AxisValue(Guid device, uint type)
+    {
+        if (_joys.Find(j => j.Guid == device) is not { LastAxes: { } axes } joy) return null;
+        for (int a = 0; a < AxisFields; a++)
+            if (joy.Axes[a] is { } obj && SameObject(obj.Type, type))
+                return Math.Clamp(axes[a] / (double)AxisRange, 0, 1);
+        return null;
+    }
+
+    /// <summary>Whether a button or key was down at the last poll.</summary>
+    public bool IsDown(Guid device, uint type)
+    {
+        if (device == DirectInputNames.SysKeyboard)
+            return _lastKeys.Contains((Key)DirectInputNames.Instance(type));
+        if (_joys.Find(j => j.Guid == device) is not { LastButtons: { } buttons } joy) return false;
+        int b = joy.Buttons.FindIndex(o => SameObject(o.Type, type));
+        return b >= 0 && b < buttons.Length && buttons[b];
+    }
+
+    // Same kind (axis/button) and instance; attribute flags such as FFACTUATOR may differ from what RBR stored.
+    private static bool SameObject(uint a, uint b) =>
+        DirectInputNames.Instance(a) == DirectInputNames.Instance(b) && ((a & 0x03) != 0) == ((b & 0x03) != 0) &&
+        ((a & 0x0C) != 0) == ((b & 0x0C) != 0);
+
     private static CapturedInput KeyInput(Key k)
     {
         int dik = (int)k;
@@ -245,7 +276,10 @@ public sealed class InputCapture : IDisposable
             j.Device.Poll();
             var st = j.Device.GetCurrentJoystickState();
             var axes = new[] { st.X, st.Y, st.Z, st.RotationX, st.RotationY, st.RotationZ, st.Sliders[0], st.Sliders[1] };
-            return (axes, st.Buttons.ToArray());
+            var buttons = st.Buttons.ToArray();
+            j.LastAxes = axes;
+            j.LastButtons = buttons;
+            return (axes, buttons);
         }
         catch
         {
@@ -260,7 +294,7 @@ public sealed class InputCapture : IDisposable
         try
         {
             _keyboard.Poll();
-            return _keyboard.GetCurrentKeyboardState().PressedKeys.ToHashSet();
+            return _lastKeys = _keyboard.GetCurrentKeyboardState().PressedKeys.ToHashSet();
         }
         catch
         {

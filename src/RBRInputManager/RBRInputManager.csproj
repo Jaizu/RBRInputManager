@@ -7,11 +7,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <!-- Overridden by the release workflow from the git tag (vX.Y.Z). -->
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Product>RBR Input Manager</Product>
     <Authors>Jaizu</Authors>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <ApplicationIcon>Assets\RBRInputManager.ico</ApplicationIcon>
+    <!-- Fixed build location (bin\Debug\RBRInputManager.exe) so a shortcut to the dev build keeps working. -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
   </PropertyGroup>
 
   <!-- Release builds ship as one self-contained exe so users don't need the .NET runtime. -->
@@ -22,6 +26,36 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
+
+  <!--
+    Local dev install: every successful Debug build is copied to app\ in the repo root (git-ignored), which a
+    pinned taskbar shortcut opens. Cleaning bin\obj never touches it, and a failed build leaves the last
+    good copy in place. If that copy is running it is closed first (asking about unsaved edits, as on X) and
+    reopened afterwards; if it stays open the files are locked: the build still succeeds and warns instead.
+  -->
+  <PropertyGroup>
+    <DevInstallDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\app\'))</DevInstallDir>
+    <DevRestartScript>powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$(MSBuildThisFileDirectory)..\..\tools\restart-dev-app.ps1" -Exe "$(DevInstallDir)RBRInputManager.exe" -Marker "$(MSBuildThisFileDirectory)$(IntermediateOutputPath)reopen-dev-app"</DevRestartScript>
+  </PropertyGroup>
+  <Target Name="CopyToDevInstall" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' And '$(CI)' != 'true'">
+    <ItemGroup>
+      <DevInstallFiles Include="$(OutDir)**\*" />
+    </ItemGroup>
+    <Exec Command="$(DevRestartScript) -Stop -Source &quot;$(MSBuildThisFileDirectory)$(OutDir.TrimEnd('\'))&quot;" ContinueOnError="true" />
+    <Copy SourceFiles="@(DevInstallFiles)" DestinationFiles="@(DevInstallFiles->'$(DevInstallDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" Retries="0" ContinueOnError="WarnAndContinue" />
+    <Message Importance="high" Text="Dev install updated: $(DevInstallDir)RBRInputManager.exe" Condition="'$(MSBuildLastTaskResult)' == 'true'" />
+    <Exec Command="$(DevRestartScript) -Start" ContinueOnError="true" />
+  </Target>
+
+  <ItemGroup>
+    <Resource Include="Assets\RBRInputManager.ico" />
+    <Resource Include="Assets\SteeringWheel.png" />
+    <Resource Include="Assets\Warning.png" />
+    <Resource Include="Assets\Fonts\*.ttf;Assets\Fonts\*.otf" />
+    <None Include="Assets\Logo.svg" />
+    <None Include="Assets\Wheel.svg" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Vortice.DirectInput" Version="3.8.3" />

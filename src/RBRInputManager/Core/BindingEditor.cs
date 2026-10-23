@@ -124,7 +124,7 @@ public sealed class BindingEditor
         string? backup = null;
         if (acmChanged)
         {
-            backup = GameFiles.Backup(rbr, RbrInstallation.AcmFile);
+            backup = GameFiles.Backup(rbr, rbr.AcmFile);
             GameFiles.WriteInPlace(_file.Path, ActionMapFile.Serialize(_file.Version, _maps));
             var check = ActionMapFile.Load(_file.Path);
             if (check.Maps.Count != _maps.Count || check.Maps.Where((m, i) => !SameBindings(m, _maps[i])).Any())

@@ -6,7 +6,7 @@ RBR stores controller bindings by DirectInput *instance GUID*. When Windows give
 
 ## Features
 
-- **Game controls**: every RBR action with its device, input and axis inversion (`SavedGames\pfMULLIGATAWNY.acm`, `input.ini`), plus a green/red status dot for each device. RBR keeps one control map per set of connected controllers; the app shows them all, marks the active one and can copy an old map into it.
+- **Game controls**: every RBR action with its device, input and axis inversion (`SavedGames\pf<PROFILE>.acm`, `input.ini`; the most recently played RBR profile is used, or the one picked in Settings), plus a green/red status dot for each device. RBR keeps one control map per set of connected controllers; the app shows them all, marks the active one and can copy an old map into it.
 - **Binding editor**: bind game actions and RBRControls functions by pressing a button/key or moving an axis. Edits stay pending until *Save to game* (backed up and verified).
 - **Find by pressing**: with the app in front, press any input to jump to where it is bound.
 - **RBRControls**: JoyKey and HShifter binds and options (`Plugins\RBRControls\RBRControls.ini`).

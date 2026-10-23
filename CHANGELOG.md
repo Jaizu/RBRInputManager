@@ -2,6 +2,32 @@
 
 All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-23
+
+### Added
+- Built-in **Default** profile holding the original game setup (taken from the first-run backup). It can be
+  applied like any other profile but not overwritten or deleted.
+- **Use a map with the connected controllers**: when no control map matches the controllers plugged in right now,
+  the app says which controllers differ and can rewrite the selected map's device list to match, so RBR uses its
+  bindings instead of creating a default map. Bindings on controllers that are no longer connected are removed
+  (and listed); the controls file is backed up first.
+- **Live input display** next to the tabs, styled after RBR's input HUD: steering wheel plus clutch, brake,
+  throttle and handbrake bars, driven by the active map's bindings (including unsaved edits).
+- Missing devices show when Windows last saw them ("last seen 21 Oct 2026, 18:02 (2 days ago)"). Devices seen in
+  the last month get an amber dot instead of red.
+- RBRControls binds on disconnected devices are matched by name against controllers Windows remembers.
+
+### Changed
+- Picking a profile in the header selector no longer writes it straight away. An icon next to it shows whether the
+  game files match that profile (✓) or differ from it (⚠), and **Apply** writes it to the game when they differ.
+  This replaces the "Modified" badge and the Revert button.
+- The RBR profile is no longer assumed to be `MULLIGATAWNY`. The app finds every `SavedGames\pf*.acm`, uses the
+  most recently played profile and lets you pick another one in **Settings → RBR profile**.
+- New app logo: shown in the title bar and the install header, and used as the exe/taskbar icon.
+- The window reopens at its last position and size (and maximized if it was). If that spot no longer fits on any
+  screen, for example after unplugging a monitor, it opens centered at the default size.
+- Tooltips are dark bubbles placed beside, below or above their target with an arrow pointing at it.
+
 ## [0.2.0] - 2026-10-23
 
 ### Added
@@ -52,5 +78,6 @@ First release.
 - Self-updater from GitHub releases.
 - Light and dark theme.
 
+[0.3.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jaizu/RBRInputManager/releases/tag/v0.1.0

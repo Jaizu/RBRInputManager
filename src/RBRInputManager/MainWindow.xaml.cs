@@ -17,12 +17,12 @@ using MessageBoxResult = Wpf.Ui.Controls.MessageBoxResult;
 
 namespace RBRInputManager;
 
-/// <summary>Drives the green/red dot in the Status columns.</summary>
-public enum LinkState { None, Ok, Missing }
+/// <summary>Drives the dot next to device names: green connected, orange seen this month, red missing.</summary>
+public enum LinkState { None, Ok, Recent, Missing }
 
 public sealed record GameBindingRow(int ActionId, int? BindingIndex, string Action, string Device, string Input, string Inverted,
     string Status, LinkState State, bool IsUnbound, bool IsChanged);
-public sealed record ProfileDeviceRow(string Group, string Index, string Name, string? VidPid, string Guid, string Status, LinkState State);
+public sealed record ProfileDeviceRow(string Group, string Index, string Device, string? VidPid, string Guid, string Status, LinkState State);
 public sealed record PluginBindingRow(string Key, string Page, string Function, string Device, string Input, string Trigger, string GameMode,
     string Status, LinkState State, bool IsUnbound, bool IsChanged);
 public sealed record MapItem(ActionMap Map, string Label);
@@ -33,6 +33,7 @@ public partial class MainWindow : FluentWindow
     private RbrInstallation? _rbr;
     private DeviceCatalog? _devices;
     private ActionMapFile? _acm;
+    private List<GameBindingRow> _gameRows = new();
     private List<PluginBindingRow> _pluginRows = new();
     private List<PluginBinding> _pluginDefs = new();
     private BindingEditor? _editor;
@@ -42,7 +43,11 @@ public partial class MainWindow : FluentWindow
     private UpdateInfo? _update;
     private bool _initializing = true;
     private bool _reloading;
+    private bool _fillingProfiles;
     private bool _syncingProfileBox;
+    private int _pageBeforeSettings = 1; // Game controls (tab 0 is Info)
+    private readonly System.Windows.Threading.DispatcherTimer _liveTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
+    private HashSet<int> _invertedActions = new();
 
     static MainWindow()
     {
@@ -61,14 +66,27 @@ public partial class MainWindow : FluentWindow
     public MainWindow()
     {
         InitializeComponent();
+        Tabs.SelectedItem = GameTab; // the Info tab comes first but never opens by default
 
         ThemeBox.SelectedIndex = (int)_settings.Theme;
         LocateSwitch.IsChecked = _settings.LocateInputs;
+        GameBoundOnlyBox.IsChecked = _settings.GameBoundOnly;
+        OnlyBoundBox.IsChecked = _settings.PluginBoundOnly;
+        ApplicationThemeManager.Changed += (_, _) => ApplyAccent();
+        _liveTimer.Tick += (_, _) => UpdateLiveInputs();
+        _liveTimer.Start();
         Activated += (_, _) => UpdateMonitorPause();
         Deactivated += (_, _) => UpdateMonitorPause();
         VersionText.Text = $"Version {UpdateService.CurrentVersion.ToString(3)} · github.com/{UpdateService.Repo}";
         SetUpdateState(UpdateState.Checking);
 
+        SourceInitialized += (_, _) =>
+        {
+            if (_settings.Window is not { } bounds ||
+                !WindowPlacement.Restore(new System.Windows.Interop.WindowInteropHelper(this).Handle, bounds)) return;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            if (bounds.Maximized) WindowState = WindowState.Maximized;
+        };
         Loaded += async (_, _) =>
         {
             ApplyTheme(_settings.Theme);
@@ -84,12 +102,18 @@ public partial class MainWindow : FluentWindow
         };
         Closed += (_, _) =>
         {
+            _liveTimer.Stop();
             _capture?.Dispose();
             _monitor?.Dispose();
             _devices?.Dispose();
         };
         Closing += async (_, e) =>
         {
+            if (WindowPlacement.Read(new System.Windows.Interop.WindowInteropHelper(this).Handle) is { } bounds)
+            {
+                _settings.Window = bounds;
+                _settings.Save();
+            }
             if (_closeConfirmed || _editor?.IsDirty != true) return;
             e.Cancel = true;
             if (await Confirm("Discard unsaved changes?", $"You have {Plural(_editor.ChangeCount, "unsaved change")} to the bindings.", "Discard and close"))
@@ -111,13 +135,27 @@ public partial class MainWindow : FluentWindow
 
     private void Open(string root)
     {
-        _rbr = new RbrInstallation(root);
+        _rbr = new RbrInstallation(root, _settings.RbrProfile);
         _settings.RbrPath = root;
         _settings.Save();
 
         InstallText.Text = $"Richard Burns Rally · {root}";
-        InstallSubText.Text = $"RBR profile {RbrInstallation.RsfProfile}, the one RallySimFans always uses";
+        string how = _rbr.Profiles.Count switch
+        {
+            0 => "not created yet",
+            1 => "the only one in SavedGames",
+            _ when _rbr.ProfileChosen => "picked in Settings",
+            _ => "the most recently played; change it in Settings",
+        };
+        InstallSubText.Text = $"RBR profile {_rbr.Profile} ({how})";
         SettingsPathText.Text = root;
+        SettingsProfileText.Text = $"Bindings are read from SavedGames\\pf{_rbr.Profile}.acm. " +
+            (_rbr.Profiles.Count > 1 ? "By default the most recently played profile is used." : "This is the only profile in this install.");
+        _fillingProfiles = true;
+        RbrProfileBox.ItemsSource = _rbr.Profiles.Count > 0 ? _rbr.Profiles : new[] { _rbr.Profile };
+        RbrProfileBox.SelectedItem = _rbr.Profile;
+        RbrProfileBox.IsEnabled = _rbr.Profiles.Count > 1;
+        _fillingProfiles = false;
 
         // First time we see this install: keep a pristine copy before the app ever writes to it.
         string? backupNote = null;
@@ -158,8 +196,10 @@ public partial class MainWindow : FluentWindow
         BuildPluginRows();
         UpdatePendingBar();
         Try("Force feedback", LoadFfb);
+        Try("Default profile", () => ProfileStore.EnsureDefault(_rbr, _devices));
         LoadProfiles();
         RestartMonitor();
+        LoadInvertedAxes();
 
         if (_devices.DirectInputError is not null)
             errors.Add($"DirectInput: {_devices.DirectInputError}");
@@ -167,6 +207,7 @@ public partial class MainWindow : FluentWindow
         SetStatus(errors.Count == 0
             ? $"Loaded {DateTime.Now:HH:mm:ss} · {_devices.Attached.Count} controllers connected"
             : string.Join("   |   ", errors));
+        WarmUpPages();
     }
 
     private void SetStatus(string text) => StatusText.Text = text;
@@ -181,7 +222,7 @@ public partial class MainWindow : FluentWindow
         MapBox.ItemsSource = null;
         ShowMap(null);
         if (!File.Exists(_rbr!.Acm))
-            throw new FileNotFoundException($"{_rbr.Acm} not found. Start RBR once through the RSF launcher so it creates its profile.");
+            throw new FileNotFoundException($"No RBR profile found (SavedGames\\pf*.acm). Start RBR once through the RSF launcher so it creates its profile.");
 
         _acm = ActionMapFile.Load(_rbr.Acm);
         var active = _acm.ActiveMap(_devices!.AttachedGuids);
@@ -199,10 +240,11 @@ public partial class MainWindow : FluentWindow
     private void ShowMap(ActionMap? map)
     {
         GameGrid.ItemsSource = null;
+        _gameRows = new();
         ProfileDevicesGrid.ItemsSource = null;
         BindingCountText.Text = MapDeviceCountText.Text = "";
         MapNotice.Visibility = Visibility.Collapsed;
-        CopyMapButton.Visibility = Visibility.Collapsed;
+        CopyMapButton.Visibility = AdaptMapButton.Visibility = Visibility.Collapsed;
         if (map is null || _acm is null || _devices is null) return;
 
         var saved = map;
@@ -231,12 +273,13 @@ public partial class MainWindow : FluentWindow
         foreach (var (b, i) in indexed.Where(x => x.b.ActionId >= RbrActions.All.Count))
             rows.Add(BindingRow(RbrActions.Get(b.ActionId).Name, b, i, devices, "", false));
 
-        GameGrid.ItemsSource = rows;
-        // The map's devices in RBR's order (red dot when missing), then every other connected controller.
+        _gameRows = rows;
+        ApplyGameFilter();
+        // The map's devices in RBR's order (orange/red dot when missing), then every other connected controller.
         const string InMap = "In this map", Others = "Other connected devices";
         var deviceRows = devices
             .Select((d, i) => new ProfileDeviceRow(InMap, $"{i}", d.Name, d.VidPid, d.InstanceGuid.ToString("B").ToUpperInvariant(),
-                d.Status, d.Connected ? LinkState.Ok : LinkState.Missing))
+                d.Status, Link(d)))
             .ToList();
         var inMap = map.Devices.ToHashSet();
         deviceRows.AddRange(_devices.AttachedGuids
@@ -248,12 +291,12 @@ public partial class MainWindow : FluentWindow
         var deviceView = new ListCollectionView(deviceRows);
         deviceView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(ProfileDeviceRow.Group)));
         ProfileDevicesGrid.ItemsSource = deviceView;
-        BindingCountText.Text = Plural(map.Bindings.Count, "binding");
-        MapDeviceCountText.Text = $"{map.Devices.Count} in map · {deviceRows.Count - map.Devices.Count} other";
+        BindingCountText.Text = $"({Plural(map.Bindings.Count, "binding")})";
+        MapDeviceCountText.Text = $"({map.Devices.Count} in map · {deviceRows.Count - map.Devices.Count} other)";
 
         var active = _acm.ActiveMap(_devices.AttachedGuids);
         string? notice = active is null
-            ? "No map matches the controllers connected right now. RBR creates a new map with default bindings the next time it starts."
+            ? NoMatchNotice(saved)
             : map.Index != active.Index
                 ? $"RBR is not using this map: it only applies when exactly these controllers are connected. With the current controllers RBR uses map {active.Index + 1}."
                 : null;
@@ -267,6 +310,68 @@ public partial class MainWindow : FluentWindow
             CopyMapButton.Content = $"Copy to map {active.Index + 1}";
             CopyMapButton.Visibility = Visibility.Visible;
         }
+        if (active is null && saved.Bindings.Count > 0)
+            AdaptMapButton.Visibility = Visibility.Visible;
+    }
+
+    private string NoMatchNotice(ActionMap map)
+    {
+        var (add, remove) = MapAdapter.Diff(map, _devices!.AttachedGuids);
+        var parts = new List<string>();
+        if (add.Count > 0) parts.Add($"{string.Join(", ", add.Select(g => _devices.Resolve(g).Name))} {(add.Count == 1 ? "is" : "are")} connected but not in this map");
+        if (remove.Count > 0) parts.Add($"{string.Join(", ", remove.Select(g => _devices.Resolve(g).Name))} {(remove.Count == 1 ? "is" : "are")} in this map but not connected");
+        return "No map matches the controllers connected right now" +
+               (parts.Count > 0 ? $" ({string.Join("; ", parts)})" : "") +
+               ". RBR creates a new map with default bindings the next time it starts, unless this map is set to use these controllers.";
+    }
+
+    private async void AdaptMap_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rbr is null || _acm is null || _devices is null || (MapBox.SelectedItem as MapItem)?.Map is not { } map) return;
+        if (_acm.ActiveMap(_devices.AttachedGuids) is not null) return;
+        if (!await ConfirmDiscardEdits() || !await EnsureGameClosed()) return;
+
+        var (add, remove) = MapAdapter.Diff(map, _devices.AttachedGuids);
+        var lines = new List<string>();
+        if (add.Count > 0) lines.Add("Add: " + string.Join(", ", add.Select(g => _devices.Resolve(g).Name)));
+        if (remove.Count > 0)
+        {
+            var removeSet = remove.ToHashSet();
+            int lost = map.Bindings.Count(b => b.DeviceIndex >= 0 && b.DeviceIndex < map.Devices.Count && removeSet.Contains(map.Devices[b.DeviceIndex]));
+            lines.Add("Remove: " + string.Join(", ", remove.Select(g => _devices.Resolve(g).Name)) +
+                      (lost > 0 ? $" (its {Plural(lost, "binding")} will be lost)" : ""));
+        }
+        var content = new System.Windows.Controls.TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Text = $"RBR picks a map by the exact set of connected controllers. Map {map.Index + 1}'s device list will be changed " +
+                   "to match the controllers connected now, so RBR uses its bindings instead of creating a default map.\n\n" +
+                   string.Join("\n", lines) + "\n\nThe current controls file is backed up first.",
+        };
+
+        if (!await Confirm($"Use map {map.Index + 1} with these controllers?", content, "Update map"))
+            return;
+
+        await Run(async () =>
+        {
+            var result = MapAdapter.Adapt(_rbr, _acm, map, _devices.AttachedGuids, g => _devices.Resolve(g).Name);
+            Reload();
+            SetStatus($"Map {map.Index + 1} now matches the connected controllers. Backup: {result.BackupPath}");
+            if (result.Dropped.Count > 0)
+                await Info("Some bindings were removed",
+                    "These used a controller that is not connected, so they were removed from the map:\n\n" +
+                    string.Join("\n", result.Dropped));
+        });
+    }
+
+    private void ApplyGameFilter() =>
+        GameGrid.ItemsSource = GameBoundOnlyBox.IsChecked == true ? _gameRows.Where(r => !r.IsUnbound).ToList() : _gameRows;
+
+    private void GameBoundOnly_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.GameBoundOnly = GameBoundOnlyBox.IsChecked == true;
+        _settings.Save();
+        ApplyGameFilter();
     }
 
     private async void CopyMap_Click(object sender, RoutedEventArgs e)
@@ -311,7 +416,7 @@ public partial class MainWindow : FluentWindow
     private GameBindingRow BindingRow(string action, ActionBinding b, int index, List<DeviceInfo> devices, string inverted, bool changed)
     {
         if (b.DeviceIndex < 0 || b.DeviceIndex >= devices.Count)
-            return new(b.ActionId, index, action, $"Invalid device index ({b.DeviceIndex})", $"0x{b.ObjectType:X8}", inverted, "Error",
+            return new(b.ActionId, index, action, $"Invalid device index ({b.DeviceIndex})", $"0x{b.ObjectType:X8}", inverted, "The map has no device at this index",
                 LinkState.Missing, false, changed);
 
         var dev = devices[b.DeviceIndex];
@@ -322,9 +427,11 @@ public partial class MainWindow : FluentWindow
             ? real?.Trim() ?? generic
             : $"{real}  ({generic})";
 
-        return new(b.ActionId, index, action, dev.Name, inputText, inverted, dev.Status,
-            dev.Connected ? LinkState.Ok : LinkState.Missing, false, changed);
+        return new(b.ActionId, index, action, dev.Name, inputText, inverted, dev.Status, Link(dev), false, changed);
     }
+
+    private static LinkState Link(DeviceInfo d) =>
+        d.Connected ? LinkState.Ok : d.RecentlySeen ? LinkState.Recent : LinkState.Missing;
 
     // ---------------------------------------------------------------- editing
 
@@ -486,6 +593,72 @@ public partial class MainWindow : FluentWindow
 
     private void CancelCapture_Click(object sender, RoutedEventArgs e) => StopCapture();
 
+    // ---------------------------------------------------------------- live input display
+
+    private void LoadInvertedAxes()
+    {
+        var input = IniFile.TryLoad(_rbr!.InputIni);
+        _invertedActions = RbrActions.All
+            .Where(a => a.InvertKey is not null &&
+                        string.Equals(input?.Get("Settings", a.InvertKey), "true", StringComparison.OrdinalIgnoreCase))
+            .Select(a => a.Id)
+            .ToHashSet();
+    }
+
+    /// <summary>Shows what RBR would read: the active map's bindings (with pending edits) applied to the monitor's last poll.</summary>
+    private void UpdateLiveInputs()
+    {
+        if (WindowState == WindowState.Minimized) return;
+        var active = _monitor is null || _acm is null || _devices is null ? null : _acm.ActiveMap(_devices.AttachedGuids);
+        if (active is null)
+        {
+            LiveInputs.Show(default);
+            return;
+        }
+        var map = _editor?.Maps[active.Index] ?? active;
+        var monitor = _monitor!;
+
+        // Each bound input as 0..1 (axes after RBR's invert setting, buttons and keys 0 or 1); null when unbound.
+        double? Level(int actionId, bool axesOnly = false)
+        {
+            double? level = null;
+            foreach (var b in map.Bindings)
+            {
+                if (b.ActionId != actionId || b.DeviceIndex < 0 || b.DeviceIndex >= map.Devices.Count) continue;
+                var device = map.Devices[b.DeviceIndex];
+                double v;
+                if ((b.ObjectType & 0x03) != 0)
+                {
+                    if (monitor.AxisValue(device, b.ObjectType) is not double x) continue; // device not connected
+                    // RBR reads a pedal as pressed at the low end of its range unless inverted (pedals that
+                    // rest at 0 need "invert"); steering and the combined axis are taken as they come.
+                    if (actionId is not (0 or 4)) x = 1 - x;
+                    v = _invertedActions.Contains(actionId) ? 1 - x : x;
+                }
+                else if (axesOnly) continue;
+                else v = monitor.IsDown(device, b.ObjectType) ? 1 : 0;
+                level = Math.Max(level ?? 0, v);
+            }
+            return level;
+        }
+
+        double? Sum(double? a, double? b) => a is null && b is null ? null : Math.Min((a ?? 0) + (b ?? 0), 1);
+
+        // The combined axis rests in the middle: one half throttle, the other brake.
+        double? combined = Level(4);
+        double? steerAxis = Level(0, axesOnly: true), left = Level(1), right = Level(2);
+        double? steering = steerAxis is null && left is null && right is null
+            ? null
+            : Math.Clamp((steerAxis is double s ? s * 2 - 1 : 0) - (left ?? 0) + (right ?? 0), -1, 1);
+
+        LiveInputs.Show(new InputLevels(
+            steering,
+            Level(11),
+            Sum(Level(5), combined is double cb ? Math.Max(0, 1 - cb * 2) : null),
+            Sum(Level(3), combined is double ct ? Math.Max(0, ct * 2 - 1) : null),
+            Level(6)));
+    }
+
     // ---------------------------------------------------------------- locate pressed inputs
 
     /// <summary>Reopens the devices (after a reload they may have changed) and listens for presses.</summary>
@@ -532,8 +705,9 @@ public partial class MainWindow : FluentWindow
 
         // Game bindings in the map on screen (pending edits included).
         var gameHits = new List<GameBindingRow>();
-        if ((MapBox.SelectedItem as MapItem)?.Map is { } shown && GameGrid.ItemsSource is List<GameBindingRow> rows)
+        if ((MapBox.SelectedItem as MapItem)?.Map is { } shown)
         {
+            var rows = _gameRows;
             var map = _editor?.Maps[shown.Index] ?? shown;
             var indexes = map.Bindings.Select((b, i) => (b, i))
                 .Where(x => x.b.DeviceIndex >= 0 && x.b.DeviceIndex < map.Devices.Count &&
@@ -645,11 +819,12 @@ public partial class MainWindow : FluentWindow
 
     private void ShowStrength(float? strength)
     {
+        StrengthFullButton.Visibility = strength is < 0.995f ? Visibility.Visible : Visibility.Collapsed;
         if (strength is null)
         {
             StrengthText.Text = "—";
             StrengthSlider.Value = 0;
-            SetNotice(StrengthNotice, StrengthNoticeIcon, SymbolRegular.Info24, "SystemFillColorAttentionBackgroundBrush", "AccentTextFillColorPrimaryBrush");
+            SetNotice(StrengthNotice, StrengthNoticeIcon, SymbolRegular.Info24, "SystemFillColorAttentionBackgroundBrush", "TextFillColorPrimaryBrush");
             StrengthNoticeText.Text = "Could not read the in-game strength from the RBR profile.";
             return;
         }
@@ -668,8 +843,19 @@ public partial class MainWindow : FluentWindow
             SetNotice(StrengthNotice, StrengthNoticeIcon, SymbolRegular.Warning24, "SystemFillColorCautionBackgroundBrush", "SystemFillColorCautionBrush");
             StrengthNoticeText.Text =
                 $"The in-game strength is at {percent}%. In RBR it should stay at 100%: lowering it here clips detail. " +
-                "Set it back to 100% in RBR (Options → Controls → Force Feedback → Strength) and adjust the force in your wheelbase software instead.";
+                "Set it back to 100% (here or in RBR) and adjust the force in your wheelbase software instead.";
         }
+    }
+
+    private async void StrengthFull_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rbr is null || !await EnsureGameClosed()) return;
+        await Run(() =>
+        {
+            RbrProfileFile.SetForceFeedbackStrength(_rbr.ProfileRbr, 1f);
+            LoadFfb();
+            SetStatus($"In-game strength set to 100%. The profile as it was is kept in {RbrProfileFile.BackupPath(_rbr.ProfileRbr)}");
+        });
     }
 
     private static void SetNotice(Border notice, SymbolIcon icon, SymbolRegular symbol, string background, string iconBrush)
@@ -697,8 +883,6 @@ public partial class MainWindow : FluentWindow
 
     private void BuildPluginRows()
     {
-        var attachedNames = _devices?.Attached.Select(d => d.InstanceName.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase)
-                            ?? new HashSet<string>();
         _pluginRows = new();
         foreach (var d in _pluginDefs)
         {
@@ -710,9 +894,11 @@ public partial class MainWindow : FluentWindow
                 continue;
             }
             var (device, inputText) = RbrControlsConfig.ParseBind(value);
-            bool connected = device == RbrControlsConfig.KeyboardDevice || attachedNames.Contains(device);
+            var info = device == RbrControlsConfig.KeyboardDevice
+                ? new DeviceInfo(DirectInputNames.SysKeyboard, device, null, true, "System")
+                : _devices?.ResolveName(device) ?? new DeviceInfo(Guid.Empty, device, null, false, "—");
             _pluginRows.Add(new(d.Key, d.Page, d.Function, device.Length > 0 ? device : value, inputText, d.Trigger, d.GameMode,
-                connected ? "Connected" : "Not connected", connected ? LinkState.Ok : LinkState.Missing, false, changed));
+                info.Status, Link(info), false, changed));
         }
         ApplyPluginFilter();
     }
@@ -723,7 +909,7 @@ public partial class MainWindow : FluentWindow
         var view = new ListCollectionView(rows);
         view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(PluginBindingRow.Page)));
         PluginGrid.ItemsSource = view;
-        PluginCountText.Text = Plural(_pluginRows.Count(r => !r.IsUnbound), "bind");
+        PluginCountText.Text = $"({Plural(_pluginRows.Count(r => !r.IsUnbound), "bind")})";
     }
 
     // ---------------------------------------------------------------- profiles
@@ -733,7 +919,7 @@ public partial class MainWindow : FluentWindow
         var profiles = ProfileStore.LoadAll();
         ProfileList.ItemsSource = profiles;
         NoProfilesText.Visibility = profiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        ProfileCountText.Text = Plural(profiles.Count, "profile");
+        ProfileCountText.Text = $"({Plural(profiles.Count, "profile")})";
         UpdateProfileButtons();
         RefreshCurrentProfile(profiles);
     }
@@ -755,14 +941,31 @@ public partial class MainWindow : FluentWindow
         CurrentProfileBox.SelectedItem = current;
         _syncingProfileBox = false;
 
+        // Nothing to pick from: don't open an empty (or single, already selected) list.
+        bool canPick = profiles.Count > 1 || (profiles.Count == 1 && current is null);
+        CurrentProfileBox.IsHitTestVisible = canPick;
+        CurrentProfileBox.Focusable = canPick;
+        if (!canPick) CurrentProfileBox.IsDropDownOpen = false;
+
         NoProfileText.Text = profiles.Count == 0 ? "No profiles yet" : "No profile";
         NoProfileText.Visibility = current is null ? Visibility.Visible : Visibility.Collapsed;
 
         bool modified = false;
         try { modified = current is not null && _rbr is not null && !ProfileStore.MatchesGame(_rbr, current); }
         catch { /* unreadable files: don't claim anything */ }
-        ModifiedBadge.Visibility = modified ? Visibility.Visible : Visibility.Collapsed;
-        RevertProfileButton.IsEnabled = modified;
+        ProfileStateHost.Visibility = current is null ? Visibility.Collapsed : Visibility.Visible;
+        ProfileStateIcon.Symbol = modified ? SymbolRegular.Warning24 : SymbolRegular.CheckmarkCircle24;
+        ProfileStateIcon.SetResourceReference(ForegroundProperty,
+            modified ? "SystemFillColorCautionBrush" : "SystemFillColorSuccessBrush");
+        ProfileStateHost.ToolTip = modified
+            ? $"The game files differ from \"{current!.Name}\" (changed in game, in the launcher or here)"
+            : $"The game files match \"{current?.Name}\"";
+        ApplyCurrentButton.IsEnabled = modified;
+        ApplyCurrentHost.ToolTip = modified
+            ? $"Apply: write \"{current!.Name}\" to the game files"
+            : current is null
+                ? "Apply: pick a profile first"
+                : $"Apply: nothing to do, the game files already match \"{current.Name}\"";
     }
 
     private void SetCurrentProfile(string? name)
@@ -771,50 +974,33 @@ public partial class MainWindow : FluentWindow
         _settings.Save();
     }
 
-    private async void CurrentProfile_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void CurrentProfile_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_syncingProfileBox || _rbr is null || CurrentProfileBox.SelectedItem is not InputProfile p) return;
-        if (string.Equals(p.Name, _settings.CurrentProfile, StringComparison.CurrentCultureIgnoreCase)) return;
-        if (ProfileStore.MatchesGame(_rbr, p))
-        {
-            // The game already holds this profile: just mark it current, nothing to write.
-            SetCurrentProfile(p.Name);
-            RefreshCurrentProfile();
-            return;
-        }
-
-        // Switching profile writes the game files, so it needs the same checks as "Apply".
-        bool applied = await ConfirmDiscardEdits() && await EnsureGameClosed() &&
-                       await Confirm("Switch profile?",
-                           $"Apply \"{p.Name}\" to the game? Its bindings, axis inversion, RBRControls binds and force feedback values " +
-                           "replace the current ones (backed up first).", "Apply");
-        if (applied)
-            await Run(() =>
-            {
-                ApplyProfile(p);
-                SetStatus($"Profile \"{p.Name}\" applied to the game.");
-            });
+        // Picking a profile only selects it; the state icon shows whether the game differs and "Apply" writes it.
+        SetCurrentProfile(p.Name);
         RefreshCurrentProfile();
     }
 
-    private async void RevertProfile_Click(object sender, RoutedEventArgs e)
+    private async void ApplyCurrentProfile_Click(object sender, RoutedEventArgs e)
     {
         if (_rbr is null || CurrentProfileBox.SelectedItem is not InputProfile p) return;
         if (!await ConfirmDiscardEdits() || !await EnsureGameClosed()) return;
-        if (!await Confirm("Revert to profile?",
-                $"The game files changed since \"{p.Name}\" was saved or applied. Put the profile's values back?", "Revert"))
+        if (!await Confirm("Apply profile?",
+                $"Apply \"{p.Name}\" to the game? Its bindings, axis inversion, RBRControls binds and force feedback values " +
+                "replace the current ones (backed up first).", "Apply"))
             return;
         await Run(() =>
         {
             ApplyProfile(p);
-            SetStatus($"Game reverted to profile \"{p.Name}\".");
+            SetStatus($"Profile \"{p.Name}\" applied to the game.");
         });
     }
 
     /// <summary>Backs up the files a profile overwrites, applies it and makes it the current profile.</summary>
     private void ApplyProfile(InputProfile p)
     {
-        foreach (var rel in new[] { RbrInstallation.AcmFile, RbrInstallation.InputIniFile, RbrInstallation.RbrControlsIniFile,
+        foreach (var rel in new[] { _rbr!.AcmFile, RbrInstallation.InputIniFile, RbrInstallation.RbrControlsIniFile,
                                     RbrInstallation.GameIniFile, RbrInstallation.LauncherIniFile })
             if (File.Exists(_rbr!.Path(rel))) GameFiles.Backup(_rbr, rel);
         ProfileStore.Apply(_rbr!, p);
@@ -826,21 +1012,51 @@ public partial class MainWindow : FluentWindow
     private void Tabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (e.OriginalSource != Tabs || Pages is null) return;
-        var pages = new UIElement[] { GamePage, PluginPagePanel, FfbPage, ProfilesPagePanel, SettingsPagePanel };
+        var pages = new UIElement[] { InfoPage, GamePage, PluginPagePanel, FfbPage, ProfilesPagePanel, SettingsPagePanel };
         for (int i = 0; i < pages.Length; i++)
             pages[i].Visibility = i == Tabs.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
+
+        // On the settings page the settings button becomes a back arrow.
+        bool inSettings = Tabs.SelectedItem == SettingsPage;
+        SettingsIcon.Symbol = inSettings ? SymbolRegular.ArrowLeft24 : SymbolRegular.Settings24;
+        SettingsButton.ToolTip = inSettings ? "Back" : "Settings";
+        if (!inSettings) _pageBeforeSettings = Tabs.SelectedIndex;
     }
 
     private void OpenProfiles_Click(object sender, RoutedEventArgs e) => Tabs.SelectedItem = ProfilesPage;
 
-    private void OpenSettings_Click(object sender, RoutedEventArgs e) => Tabs.SelectedItem = SettingsPage;
+    private void OpenSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (Tabs.SelectedItem == SettingsPage) Tabs.SelectedIndex = _pageBeforeSettings;
+        else Tabs.SelectedItem = SettingsPage;
+    }
+
+    /// <summary>
+    /// Lays out the hidden pages while the app is idle so the first visit to a tab doesn't pay for building
+    /// its grids (they show all rows, so every row is created on the first layout).
+    /// </summary>
+    private void WarmUpPages()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            foreach (var page in new UIElement[] { PluginPagePanel, FfbPage, ProfilesPagePanel, SettingsPagePanel })
+            {
+                if (page.Visibility != Visibility.Collapsed) continue;
+                page.Visibility = Visibility.Hidden; // measured and arranged, but not drawn
+                page.UpdateLayout();
+                if (page.Visibility == Visibility.Hidden) page.Visibility = Visibility.Collapsed;
+            }
+        }, System.Windows.Threading.DispatcherPriority.ContextIdle);
+    }
 
     private InputProfile? SelectedProfile => ProfileList.SelectedItem as InputProfile;
 
     private void UpdateProfileButtons()
     {
         bool has = SelectedProfile is not null && _rbr is not null;
-        ApplyProfileButton.IsEnabled = UpdateProfileButton.IsEnabled = DeleteProfileButton.IsEnabled = has;
+        ApplyProfileButton.IsEnabled = has;
+        // "Default" always holds the original game setup.
+        UpdateProfileButton.IsEnabled = DeleteProfileButton.IsEnabled = has && !ProfileStore.IsDefault(SelectedProfile!);
     }
 
     private void ProfileList_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateProfileButtons();
@@ -857,6 +1073,11 @@ public partial class MainWindow : FluentWindow
         if (name.Length == 0)
         {
             await Info("Profile name", "Type a name for the profile first.");
+            return;
+        }
+        if (string.Equals(name, ProfileStore.DefaultName, StringComparison.CurrentCultureIgnoreCase))
+        {
+            await Info("Profile name", $"\"{ProfileStore.DefaultName}\" is the original game setup and can't be overwritten. Pick another name.");
             return;
         }
         if (ProfileStore.Exists(name) &&
@@ -959,6 +1180,12 @@ public partial class MainWindow : FluentWindow
         Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
     }
 
+    private void Hyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+        e.Handled = true;
+    }
+
     // ---------------------------------------------------------------- updates
 
     private enum UpdateState { Checking, UpToDate, Available, Failed }
@@ -1036,19 +1263,43 @@ public partial class MainWindow : FluentWindow
 
     // ---------------------------------------------------------------- theme & settings
 
+    // App accent instead of the Windows one; the input display's steering bar uses the same red.
+    private static readonly Color AccentColor = Color.FromRgb(0xC5, 0x21, 0x28);
+
     private void ApplyTheme(ThemePreference pref)
     {
         if (pref == ThemePreference.System)
         {
-            SystemThemeWatcher.Watch(this, WindowBackdropType.Mica, true);
-            ApplicationThemeManager.ApplySystemTheme(true);
+            SystemThemeWatcher.Watch(this, WindowBackdropType.Mica, false);
+            ApplicationThemeManager.ApplySystemTheme(false);
         }
         else
         {
             SystemThemeWatcher.UnWatch(this);
             ApplicationThemeManager.Apply(pref == ThemePreference.Dark ? ApplicationTheme.Dark : ApplicationTheme.Light,
-                WindowBackdropType.Mica, true);
+                WindowBackdropType.Mica, false);
         }
+        ApplyAccent();
+    }
+
+    /// <summary>
+    /// The exact colour for every accent shade: the theme-based overload lightens it a lot in dark mode.
+    /// Reapplied on theme changes in case a theme switch resets the accent resources.
+    /// Text never takes the accent: WPF-UI's accent text brushes (links etc.) are pointed at the primary text colour.
+    /// Text on the accent is always white: the dark-theme default is black, unreadable on this red.
+    /// </summary>
+    private static void ApplyAccent()
+    {
+        ApplicationAccentColorManager.Apply(AccentColor, AccentColor, AccentColor, AccentColor);
+        var resources = Application.Current.Resources;
+        foreach (var level in new[] { "Primary", "Secondary", "Tertiary" })
+            resources[$"AccentTextFillColor{level}Brush"] = resources["TextFillColorPrimaryBrush"];
+        var dimmed = new SolidColorBrush(Color.FromArgb(0xB3, 0xFF, 0xFF, 0xFF));
+        resources["TextOnAccentFillColorPrimaryBrush"] = Brushes.White;
+        resources["TextOnAccentFillColorSecondaryBrush"] = dimmed;
+        resources["AccentButtonForeground"] = Brushes.White;
+        resources["AccentButtonForegroundPointerOver"] = Brushes.White;
+        resources["AccentButtonForegroundPressed"] = dimmed;
     }
 
     private void Theme_Changed(object sender, SelectionChangedEventArgs e)
@@ -1069,6 +1320,20 @@ public partial class MainWindow : FluentWindow
             return;
         }
         Open(dlg.FolderName);
+    }
+
+    private async void RbrProfile_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fillingProfiles || _rbr is null || RbrProfileBox.SelectedItem is not string profile || profile == _rbr.Profile) return;
+        if (!await ConfirmDiscardEdits())
+        {
+            _fillingProfiles = true;
+            RbrProfileBox.SelectedItem = _rbr.Profile;
+            _fillingProfiles = false;
+            return;
+        }
+        _settings.RbrProfile = profile;
+        Open(_rbr.Root);
     }
 
     private async void Reload_Click(object sender, RoutedEventArgs e)
@@ -1103,7 +1368,12 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private void OnlyBound_Click(object sender, RoutedEventArgs e) => ApplyPluginFilter();
+    private void OnlyBound_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.PluginBoundOnly = OnlyBoundBox.IsChecked == true;
+        _settings.Save();
+        ApplyPluginFilter();
+    }
 
     // ---------------------------------------------------------------- helpers
 

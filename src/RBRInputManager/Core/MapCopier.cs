@@ -56,7 +56,7 @@ public static class MapCopier
         var newTarget = target with { Bindings = copied.Concat(kept).OrderBy(b => b.ActionId).ToList() };
         var maps = file.Maps.Select(m => m.Index == target.Index ? newTarget : m).ToList();
 
-        string backup = GameFiles.Backup(rbr, RbrInstallation.AcmFile);
+        string backup = GameFiles.Backup(rbr, rbr.AcmFile);
         GameFiles.WriteInPlace(file.Path, ActionMapFile.Serialize(file.Version, maps));
 
         // Make sure what we wrote reads back as intended before reporting success.

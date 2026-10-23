@@ -1,0 +1,47 @@
+<UserControl x:Class="RBRInputManager.InputDisplay"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ToolTip="Live inputs, read through the bindings of the map RBR uses with the controllers connected now.">
+    <!-- Styled after RBR's own input HUD: wheel (its top stripe marks the centre), then clutch / brake / throttle / handbrake bars. -->
+    <Border Background="#E0383838" CornerRadius="6" Padding="8,4,10,3" BorderBrush="#30FFFFFF" BorderThickness="1">
+        <StackPanel Orientation="Horizontal">
+            <Grid x:Name="WheelBox" Width="40" Margin="0,0,10,0" VerticalAlignment="Center">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="40"/>
+                    <RowDefinition Height="4"/>
+                    <RowDefinition Height="5"/>
+                </Grid.RowDefinitions>
+                <Image Source="Assets/SteeringWheel.png" Width="40" Height="40" RenderTransformOrigin="0.5,0.5"
+                       RenderOptions.BitmapScalingMode="HighQuality">
+                    <Image.RenderTransform>
+                        <RotateTransform x:Name="WheelRotate"/>
+                    </Image.RenderTransform>
+                </Image>
+                <!-- Steering bar: fills from the centre towards the side being steered, with a fixed centre mark. -->
+                <Canvas x:Name="SteerTrack" Grid.Row="2" Width="40" Height="5" Background="#242424" ClipToBounds="True">
+                    <Rectangle x:Name="SteerFill" Height="5" Fill="#C52128"/>
+                    <Rectangle Canvas.Left="19" Width="2" Height="5" Fill="#C52128"/>
+                </Canvas>
+            </Grid>
+            <Grid x:Name="Pedals" VerticalAlignment="Center">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="26"/>
+                    <RowDefinition Height="13"/>
+                    <RowDefinition Height="3"/>
+                    <RowDefinition Height="4"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="30"/>
+                    <ColumnDefinition Width="30"/>
+                    <ColumnDefinition Width="30"/>
+                    <ColumnDefinition Width="30"/>
+                </Grid.ColumnDefinitions>
+                <!-- Pedal base shared by clutch, brake and throttle. -->
+                <Rectangle Grid.Row="3" Grid.ColumnSpan="3" Margin="2,0,2,0" Fill="White"/>
+                <!-- Handbrake lever foot. -->
+                <Path Grid.Row="2" Grid.RowSpan="2" Grid.Column="3" Fill="White" HorizontalAlignment="Center"
+                      Data="M0,0 H4 V2 Q4,3.5 6,3.5 H9 V7 H5 Q0,7 0,3 Z"/>
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>
