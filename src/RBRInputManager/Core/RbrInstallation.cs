@@ -89,6 +89,71 @@ public sealed class RbrInstallation
     public bool SecondaryGearControls =>
         IniFile.TryLoad(Path(NgpCarMenuIniFile)) is { } ini && ini.Get("Default", "SecondaryGearUpDownControls") != "0";
 
+    /// <summary>Why <paramref name="name"/> can't be used as an RBR profile name, or null if it can.</summary>
+    public string? ProfileNameProblem(string name)
+    {
+        if (name.Length == 0) return "Type a name.";
+        if (name.Length > RbrProfileFile.MaxNameLength) return $"RBR keeps at most {RbrProfileFile.MaxNameLength} characters.";
+        // What RBR's own name entry accepts (tried in game: '_' can't be typed, '.' and '-' can).
+        if (!name.All(c => c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '-'))
+            return "RBR only allows letters, digits, '.' and '-'.";
+        // RBR keeps the case as typed, but Windows file names ignore it: a profile differing only in case would be the
+        // same files (the game's own check compares case-sensitively, so it would overwrite the other profile).
+        bool sameProfile = string.Equals(name, Profile, StringComparison.OrdinalIgnoreCase);
+        if (!sameProfile && (File.Exists(Path($@"SavedGames\pf{name}.rbr")) || File.Exists(Path($@"SavedGames\pf{name}.acm"))))
+            return $"There already is a profile called \"{name}\".";
+        return null;
+    }
+
+    /// <summary>
+    /// Renames <see cref="Profile"/> the way RBR would have named it: the name stored inside pf&lt;NAME&gt;.rbr
+    /// (RBR saves to the files that name points at) and the .rbr / .acm / season save files. Everything is put
+    /// back if a step fails. Returns the files renamed.
+    /// </summary>
+    public IReadOnlyList<string> RenameProfile(string newName)
+    {
+        if (ProfileNameProblem(newName) is { } problem) throw new ArgumentException(problem);
+        string dir = Path("SavedGames");
+        string oldRbr = ProfileRbr;
+        if (!File.Exists(oldRbr)) throw new FileNotFoundException($"{ProfileFile} does not exist.");
+        if (newName == Profile && RbrProfileFile.Load(oldRbr).Name == newName) return Array.Empty<string>();
+
+        // The same name only rewrites the stored one (files renamed by hand). Season saves are "<n>slot<m>_<NAME>.lsp".
+        var moves = new List<(string From, string To)>();
+        if (newName != Profile)
+        {
+            moves.Add((oldRbr, System.IO.Path.Combine(dir, $"pf{newName}.rbr")));
+            if (File.Exists(Acm)) moves.Add((Acm, System.IO.Path.Combine(dir, $"pf{newName}.acm")));
+            foreach (var lsp in Directory.GetFiles(dir, $"*slot*_{Profile}.lsp"))
+            {
+                string file = System.IO.Path.GetFileName(lsp);
+                moves.Add((lsp, System.IO.Path.Combine(dir, file[..^(Profile.Length + 4)] + newName + ".lsp")));
+            }
+        }
+
+        byte[] originalRbr = File.ReadAllBytes(oldRbr);
+        var done = new List<(string From, string To)>();
+        try
+        {
+            RbrProfileFile.SetName(oldRbr, newName);
+            foreach (var m in moves)
+            {
+                // A case-only change (MyName → MYNAME) is the same file to Windows; File.Move handles it.
+                File.Move(m.From, m.To);
+                done.Add(m);
+            }
+        }
+        catch
+        {
+            foreach (var m in Enumerable.Reverse(done)) File.Move(m.To, m.From);
+            GameFiles.WriteInPlace(oldRbr, originalRbr);
+            throw;
+        }
+        if (moves.Count == 0) return new[] { $"Stored name in {ProfileFile} set to {newName}" };
+        OriginalBackup.RenameFile(Root, AcmFile, $@"SavedGames\pf{newName}.acm");
+        return moves.Select(m => $"{System.IO.Path.GetFileName(m.From)} → {System.IO.Path.GetFileName(m.To)}").ToList();
+    }
+
     /// <summary>Names of RBR / RSF launcher processes currently running (writing files under them is unsafe).</summary>
     public static IReadOnlyList<string> RunningGameProcesses()
     {

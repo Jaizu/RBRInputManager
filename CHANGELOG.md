@@ -5,6 +5,11 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
 ## [Unreleased]
 
 ### Added
+- **Rename the RBR profile** (Settings → RBR profile → Rename…): stores the new name inside `pf<NAME>.rbr` and
+  renames its `.rbr`, `.acm` and season saves, the way the game would have named them. RBR saves a profile under
+  the name stored inside it, so renaming the files by hand made the game write a second profile; the app now warns
+  when the two don't match. Names follow RBR's limits (up to 15 letters, digits, `.` and `-`, case kept as typed) and can't repeat an
+  existing profile, not even with different case (Windows would treat them as the same files).
 - **Invert axes**: the Inverted column in Game controls is now a checkbox for each axis action (steering,
   throttle, brake, combined, handbrake, clutch). Changes are pending like binding edits and Save writes them to
   `input.ini` (backed up first). RBR keeps one flag per action, so it applies to every map. The live input

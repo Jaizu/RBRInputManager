@@ -176,6 +176,8 @@ public partial class MainWindow : FluentWindow
         RbrProfileBox.SelectedItem = _rbr.Profile;
         RbrProfileBox.IsEnabled = _rbr.Profiles.Count > 1;
         _fillingProfiles = false;
+        RenameRbrProfileButton.IsEnabled = File.Exists(_rbr.ProfileRbr);
+        CheckStoredProfileName();
 
         // First time we see this install: keep a pristine copy before the app ever writes to it.
         string? backupNote = null;
@@ -1833,6 +1835,67 @@ public partial class MainWindow : FluentWindow
         }
         _settings.RbrProfile = profile;
         Open(_rbr.Root, $"RBR profile changed to {profile} in Settings");
+    }
+
+    /// <summary>
+    /// RBR saves to the files named after the name stored in pf&lt;NAME&gt;.rbr, so a profile whose files were renamed
+    /// by hand would be saved under its old name. Warns about it in the RBR profile card.
+    /// </summary>
+    private void CheckStoredProfileName()
+    {
+        string? stored = null;
+        try { if (File.Exists(_rbr!.ProfileRbr)) stored = RbrProfileFile.Load(_rbr.ProfileRbr).Name; }
+        catch (Exception ex) { Log.Warn(LogArea.Settings, $"Could not read {_rbr!.ProfileFile}", new[] { ex.Message }); }
+        if (stored is null || stored == _rbr.Profile) return;
+        SettingsProfileText.Text += $" Its file is named {_rbr.Profile} but RBR stores the name {stored} inside it, so the game " +
+            $"would save it as pf{stored}. Use Rename to make them match.";
+        Log.Warn(LogArea.Settings, $"The RBR profile {_rbr.Profile} stores the name {stored}",
+            new[] { $"RBR saves the profile to SavedGames\\pf{stored}.rbr / .acm, not to the files it was loaded from" });
+    }
+
+    private async void RenameRbrProfile_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rbr is null || !await EnsureGameClosed() || !await ConfirmDiscardEdits()) return;
+
+        var box = new Wpf.Ui.Controls.TextBox
+        {
+            Text = _rbr.Profile, MaxLength = RbrProfileFile.MaxNameLength,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        var problem = new System.Windows.Controls.TextBlock { Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap };
+        problem.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "SystemFillColorCriticalBrush");
+        var content = new StackPanel { Width = 360 };
+        content.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Text = $"The new name is stored inside the profile and its files are renamed (pf{_rbr.Profile}.rbr, .acm and " +
+                "season saves), as if it had been created with that name in game. RBR keeps upper and lower case as typed, but two " +
+                "profiles can't share a name, not even one differing only in case.",
+        });
+        content.Children.Add(box);
+        content.Children.Add(problem);
+
+        var dialog = new MessageBox { Title = "Rename RBR profile", Content = content, PrimaryButtonText = "Rename", CloseButtonText = "Cancel" };
+        void Validate()
+        {
+            string? why = box.Text == _rbr.Profile ? null : _rbr.ProfileNameProblem(box.Text);
+            problem.Text = why ?? "";
+            dialog.IsPrimaryButtonEnabled = why is null && box.Text.Length > 0;
+        }
+        box.TextChanged += (_, _) => Validate();
+        box.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+        Validate();
+        if (await dialog.ShowDialogAsync() != MessageBoxResult.Primary) return;
+
+        string oldName = _rbr.Profile, newName = box.Text;
+        await Run(LogArea.Settings, $"Renaming the RBR profile {oldName} to {newName}", () =>
+        {
+            var renamed = _rbr.RenameProfile(newName);
+            if (renamed.Count == 0) return;
+            _settings.RbrProfile = newName;
+            Open(_rbr.Root, $"RBR profile {oldName} renamed to {newName}");
+            Report(LogArea.Settings, $"RBR profile {oldName} renamed to {newName}", renamed, LogLevel.Done);
+        });
     }
 
     private async void Reload_Click(object sender, RoutedEventArgs e)

@@ -20,6 +20,10 @@ namespace RBRInputManager.Core;
 ///
 /// The in-game "Force Feedback → Strength" slider is the float right after the second GEAR tag's
 /// flag field (found by changing the slider in game: 1.0 = 100 %, 0.6 = 60 %).
+///
+/// The first PROF section holds the profile name (16 bytes, zero padded). RBR's profile list shows the file names
+/// (pf&lt;NAME&gt;.rbr without "pf" and ".rbr"), but once a profile is loaded the game uses this stored name to find
+/// pf&lt;NAME&gt;.acm and to save pf&lt;NAME&gt;.rbr, so it must always match the file name.
 /// </summary>
 public sealed class RbrProfileFile
 {
@@ -90,12 +94,44 @@ public sealed class RbrProfileFile
     /// </summary>
     public static void SetForceFeedbackStrength(string path, float value)
     {
+        float strength = Math.Clamp(value, 0f, 1f);
+        Modify(path, file =>
+        {
+            int gear = file.FindTag("GEAR", 1);
+            if (gear < 0 || file.ForceFeedbackStrength is null)
+                throw new InvalidDataException("Could not find the force feedback strength in the RBR profile.");
+            BitConverter.GetBytes(strength).CopyTo(file._plain, gear + 8);
+        }, check => check.ForceFeedbackStrength == strength);
+    }
+
+    /// <summary>
+    /// Stores a new profile name inside the file. RBR builds the file names it saves to (pf&lt;NAME&gt;.rbr / .acm)
+    /// from this name, so the files must be renamed to match (see <see cref="RbrInstallation.RenameProfile"/>).
+    /// </summary>
+    public static void SetName(string path, string name)
+    {
+        if (name.Length is 0 or > MaxNameLength || name.Any(c => c is < ' ' or > '~'))
+            throw new ArgumentException($"A profile name is 1 to {MaxNameLength} plain characters.", nameof(name));
+        Modify(path, file =>
+        {
+            int at = file.NameOffset;
+            if (at < 0 || file.Name is null)
+                throw new InvalidDataException("Could not find the profile name in the RBR profile.");
+            Array.Clear(file._plain, at, NameField);
+            Encoding.ASCII.GetBytes(name).CopyTo(file._plain, at);
+        }, check => check.Name == name);
+    }
+
+    /// <summary>
+    /// Applies a change to the decoded profile and writes it back with a new checksum. Refuses a profile whose
+    /// checksum doesn't verify (unknown encoding), and puts the file back if the written one doesn't read back.
+    /// </summary>
+    private static void Modify(string path, Action<RbrProfileFile> change, Func<RbrProfileFile, bool> verify)
+    {
         var file = Load(path);
         if (!file.ChecksumValid)
             throw new InvalidDataException("The RBR profile's checksum doesn't verify, so it isn't safe to change it here.");
-        int gear = file.FindTag("GEAR", 1);
-        if (gear < 0 || file.ForceFeedbackStrength is null)
-            throw new InvalidDataException("Could not find the force feedback strength in the RBR profile.");
+        change(file);
 
         byte[] original = File.ReadAllBytes(path);
         string backup = BackupPath(path);
@@ -106,13 +142,11 @@ public sealed class RbrProfileFile
             Log.Info(Log.Context, $"Kept the RBR profile as it was in {backup}");
         }
 
-        float strength = Math.Clamp(value, 0f, 1f);
-        BitConverter.GetBytes(strength).CopyTo(file._plain, gear + 8);
         BitConverter.GetBytes(Checksum(file._plain)).CopyTo(file._plain, 0);
         GameFiles.WriteInPlace(path, file.Encode());
 
         var check = Load(path);
-        if (!check.ChecksumValid || check.ForceFeedbackStrength != strength)
+        if (!check.ChecksumValid || !verify(check))
         {
             GameFiles.WriteInPlace(path, original);
             throw new InvalidDataException("The rewritten RBR profile did not verify; the previous file was put back.");
@@ -144,6 +178,31 @@ public sealed class RbrProfileFile
             int gear = FindTag("GEAR", 1);
             float? v = gear < 0 ? null : Float(gear + 8);
             return v is >= 0f and <= 1.0001f ? v : null;
+        }
+    }
+
+    /// <summary>
+    /// Longest name RBR keeps: the profile holds 32 bytes, but loading copies only 16 of them, terminator included,
+    /// before building the .acm / .rbr file names. Case is stored as typed.
+    /// </summary>
+    public const int MaxNameLength = 15;
+    private const int NameField = 16;
+
+    /// <summary>The name sits in the first PROF section, after its two flag fields.</summary>
+    private int NameOffset => FindTag("PROF", 0) is >= 0 and var prof ? prof + 12 : -1;
+
+    /// <summary>The profile name stored in the file (RBR's own name for it), or null if it can't be located.</summary>
+    public string? Name
+    {
+        get
+        {
+            int at = NameOffset;
+            if (at < 0 || at + NameField > _plain.Length) return null;
+            var field = _plain.AsSpan(at, NameField);
+            int end = field.IndexOf((byte)0) is >= 0 and var z ? z : NameField;
+            if (end == 0) return null;
+            var name = field[..end];
+            return name.ToArray().All(b => b is >= 0x20 and < 0x7F) ? Encoding.ASCII.GetString(name) : null;
         }
     }
 }

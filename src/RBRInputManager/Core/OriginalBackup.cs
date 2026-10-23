@@ -45,6 +45,29 @@ public static class OriginalBackup
         return f is { Existed: true } ? Path.Combine(DirFor(rbrRoot), "files", relativePath) : null;
     }
 
+    /// <summary>
+    /// Follows a game file that was renamed (an RBR profile): the original copy is also kept under the new name,
+    /// so "Restore originals" puts it back where the game now looks for it.
+    /// </summary>
+    public static void RenameFile(string rbrRoot, string oldRelative, string newRelative)
+    {
+        if (Load(rbrRoot) is not { } manifest) return;
+        int i = manifest.Files.FindIndex(f => string.Equals(f.RelativePath, oldRelative, StringComparison.OrdinalIgnoreCase));
+        if (i < 0) return;
+
+        string dir = DirFor(rbrRoot);
+        if (manifest.Files[i].Existed)
+        {
+            // Copied, not moved: the first-run snapshot is never removed.
+            string dst = Path.Combine(dir, "files", newRelative);
+            Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+            File.Copy(Path.Combine(dir, "files", oldRelative), dst, overwrite: true);
+            File.SetAttributes(dst, FileAttributes.Normal);
+        }
+        manifest.Files[i] = manifest.Files[i] with { RelativePath = newRelative };
+        File.WriteAllText(ManifestPath(rbrRoot), JsonSerializer.Serialize(manifest, Json));
+    }
+
     /// <summary>Creates the snapshot if this install has none yet. Returns the new manifest, or null if one already existed.</summary>
     public static BackupManifest? EnsureCreated(RbrInstallation rbr, string appVersion)
     {
