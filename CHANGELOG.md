@@ -9,6 +9,20 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
   throttle, brake, combined, handbrake, clutch). Changes are pending like binding edits and Save writes them to
   `input.ini` (backed up first). RBR keeps one flag per action, so it applies to every map. The live input
   display follows the pending value.
+- **What changed from the profile**: click the yellow warning next to the profile selector to see every
+  binding, axis inversion, RBRControls bind and force feedback value the game files hold differently from the
+  profile, then apply the profile or update it with the game's setup.
+- **Pending changes list**: the unsaved-changes bar has an "N CHANGES" button listing each edit (before and
+  after saving), with Save and Discard.
+
+### Changed
+- Editing bindings, binds or axis inversion is much faster: only the rows that changed are redrawn, and
+  device names from the registry are looked up once per reload. The change count is now per action.
+
+### Fixed
+- **Column resizing**: double-clicking a column edge or dragging it could squeeze the next column to a sliver
+  that couldn't be widened again (e.g. VID/PID in Devices). Every visible column edge now resizes, and the
+  accent line lights on both sides of an edge, wherever the resize cursor shows.
 
 ## [0.4.0] - 2026-10-23
 

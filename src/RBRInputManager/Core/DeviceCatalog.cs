@@ -79,14 +79,19 @@ public sealed class DeviceCatalog : IDisposable
         }
     }
 
-    private static string? OemName(string vidPid)
+    // Looked up for every row on every refresh; the catalog is rebuilt on reload, so caching here is safe.
+    private readonly Dictionary<string, string?> _oemNames = new(StringComparer.OrdinalIgnoreCase);
+
+    private string? OemName(string vidPid)
     {
+        if (_oemNames.TryGetValue(vidPid, out var cached)) return cached;
+        string? name = null;
         foreach (var hive in new[] { Registry.CurrentUser, Registry.LocalMachine })
         {
             using var k = hive.OpenSubKey($@"{OemKey}\{vidPid}");
-            if (k?.GetValue("OEMName") is string s && s.Length > 0) return s;
+            if (k?.GetValue("OEMName") is string s && s.Length > 0) { name = s; break; }
         }
-        return null;
+        return _oemNames[vidPid] = name;
     }
 
     public DeviceInfo Resolve(Guid guid)

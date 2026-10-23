@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -48,6 +50,9 @@ public partial class MainWindow : FluentWindow
     private int _pageBeforeSettings = 1; // Game controls (tab 0 is Info)
     private readonly System.Windows.Threading.DispatcherTimer _liveTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private bool _ngpSecondaryGears;
+    private bool _profileModified;
+    private ObservableCollection<GameBindingRow>? _gameShown;
+    private ObservableCollection<PluginBindingRow>? _pluginShown;
 
     static MainWindow()
     {
@@ -251,31 +256,7 @@ public partial class MainWindow : FluentWindow
         var saved = map;
         map = _editor?.Maps[map.Index] ?? map; // show pending edits
         var devices = map.Devices.Select(_devices.Resolve).ToList();
-        var indexed = map.Bindings.Select((b, i) => (b, i)).ToList();
-
-        var rows = new List<GameBindingRow>();
-        bool secondaryGears = RbrActions.HasSecondaryGears(map, _ngpSecondaryGears);
-        foreach (var action in RbrActions.All.Select(a => RbrActions.Get(a.Id, secondaryGears)))
-        {
-            var binds = indexed.Where(x => x.b.ActionId == action.Id).ToList();
-            bool? inverted = action.InvertKey is null || _editor is null ? null : _editor.IsInverted(action.InvertKey);
-            bool changed = _editor?.IsActionChanged(map.Index, action.Id) == true ||
-                           (action.InvertKey is not null && _editor?.IsInvertChanged(action.InvertKey) == true);
-
-            if (binds.Count == 0)
-            {
-                rows.Add(new(action.Id, null, action.Name, "—", "Unbound", inverted, "", LinkState.None, true, changed));
-                continue;
-            }
-            foreach (var (b, i) in binds)
-                rows.Add(BindingRow(action.Name, b, i, devices, inverted, changed));
-        }
-        // Bindings with action IDs outside the known table (e.g. added by plugins).
-        foreach (var (b, i) in indexed.Where(x => x.b.ActionId >= RbrActions.All.Count))
-            rows.Add(BindingRow(RbrActions.Get(b.ActionId).Name, b, i, devices, null, false));
-
-        _gameRows = rows;
-        ApplyGameFilter();
+        BuildGameRows(map, devices);
         // The map's devices in RBR's order (orange/red dot when missing), then every other connected controller.
         const string InMap = "In this map", Others = "Other connected devices";
         var deviceRows = devices
@@ -313,6 +294,54 @@ public partial class MainWindow : FluentWindow
         }
         if (active is null && saved.Bindings.Count > 0)
             AdaptMapButton.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>The Game controls rows for a map (with pending edits), one per binding or unbound action.</summary>
+    private void BuildGameRows(ActionMap map, List<DeviceInfo> devices)
+    {
+        var indexed = map.Bindings.Select((b, i) => (b, i)).ToList();
+        var rows = new List<GameBindingRow>();
+        bool secondaryGears = RbrActions.HasSecondaryGears(map, _ngpSecondaryGears);
+        foreach (var action in RbrActions.All.Select(a => RbrActions.Get(a.Id, secondaryGears)))
+        {
+            var binds = indexed.Where(x => x.b.ActionId == action.Id).ToList();
+            bool? inverted = action.InvertKey is null || _editor is null ? null : _editor.IsInverted(action.InvertKey);
+            bool changed = _editor?.IsActionChanged(map.Index, action.Id) == true ||
+                           (action.InvertKey is not null && _editor?.IsInvertChanged(action.InvertKey) == true);
+
+            if (binds.Count == 0)
+            {
+                rows.Add(new(action.Id, null, action.Name, "—", "Unbound", inverted, "", LinkState.None, true, changed));
+                continue;
+            }
+            foreach (var (b, i) in binds)
+                rows.Add(BindingRow(action.Name, b, i, devices, inverted, changed));
+        }
+        // Bindings with action IDs outside the known table (e.g. added by plugins).
+        foreach (var (b, i) in indexed.Where(x => x.b.ActionId >= RbrActions.All.Count))
+            rows.Add(BindingRow(RbrActions.Get(b.ActionId).Name, b, i, devices, null, false));
+
+        _gameRows = rows;
+        ApplyGameFilter();
+    }
+
+    /// <summary>
+    /// Shows rows in a grid, replacing only the rows that changed when the count is the same (rows are records,
+    /// so unchanged ones compare equal). Rebuilding every row of these unvirtualized grids is what makes edits slow.
+    /// </summary>
+    private static ObservableCollection<T> SyncRows<T>(System.Windows.Controls.DataGrid grid, ObservableCollection<T>? shown,
+        IReadOnlyList<T> rows, Func<ObservableCollection<T>, System.Collections.IEnumerable>? view = null)
+    {
+        if (shown is not null && shown.Count == rows.Count && grid.ItemsSource is not null &&
+            ReferenceEquals((grid.ItemsSource as ICollectionView)?.SourceCollection ?? grid.ItemsSource, shown))
+        {
+            for (int i = 0; i < rows.Count; i++)
+                if (!EqualityComparer<T>.Default.Equals(shown[i], rows[i])) shown[i] = rows[i];
+            return shown;
+        }
+        var fresh = new ObservableCollection<T>(rows);
+        grid.ItemsSource = view?.Invoke(fresh) ?? fresh;
+        return fresh;
     }
 
     private string NoMatchNotice(ActionMap map)
@@ -366,7 +395,7 @@ public partial class MainWindow : FluentWindow
     }
 
     private void ApplyGameFilter() =>
-        GameGrid.ItemsSource = GameBoundOnlyBox.IsChecked == true ? _gameRows.Where(r => !r.IsUnbound).ToList() : _gameRows;
+        _gameShown = SyncRows(GameGrid, _gameShown, GameBoundOnlyBox.IsChecked == true ? _gameRows.Where(r => !r.IsUnbound).ToList() : _gameRows);
 
     private void GameBoundOnly_Click(object sender, RoutedEventArgs e)
     {
@@ -421,14 +450,18 @@ public partial class MainWindow : FluentWindow
                 LinkState.Missing, false, changed);
 
         var dev = devices[b.DeviceIndex];
-        bool keyboard = dev.InstanceGuid == DirectInputNames.SysKeyboard;
-        string generic = DirectInputNames.Describe(b.ObjectType, keyboard);
-        string? real = keyboard ? null : _devices!.ObjectName(dev.InstanceGuid, b.ObjectType);
-        string inputText = real is null || string.Equals(real.Trim(), generic, StringComparison.OrdinalIgnoreCase)
+        return new(b.ActionId, index, action, dev.Name, InputText(dev.InstanceGuid, b.ObjectType), inverted, dev.Status, Link(dev), false, changed);
+    }
+
+    /// <summary>The device's own name for an input when it is connected, plus the generic one ("X Axis  (Axis 0)").</summary>
+    private string InputText(Guid device, uint objectType)
+    {
+        bool keyboard = device == DirectInputNames.SysKeyboard;
+        string generic = DirectInputNames.Describe(objectType, keyboard);
+        string? real = keyboard ? null : _devices!.ObjectName(device, objectType);
+        return real is null || string.Equals(real.Trim(), generic, StringComparison.OrdinalIgnoreCase)
             ? real?.Trim() ?? generic
             : $"{real}  ({generic})";
-
-        return new(b.ActionId, index, action, dev.Name, inputText, inverted, dev.Status, Link(dev), false, changed);
     }
 
     private static LinkState Link(DeviceInfo d) =>
@@ -438,10 +471,15 @@ public partial class MainWindow : FluentWindow
 
     private int? ShownMapIndex => (MapBox.SelectedItem as MapItem)?.Map.Index;
 
-    private void RefreshEdits()
+    /// <summary>After an edit: rebuilds only the edited grid's rows; the map's devices and notices can't change.</summary>
+    private void RefreshEdits(bool game = true, bool plugin = false)
     {
-        ShowMap((MapBox.SelectedItem as MapItem)?.Map);
-        BuildPluginRows();
+        if (game && _editor is not null && _devices is not null && ShownMapIndex is int map)
+        {
+            var m = _editor.Maps[map];
+            BuildGameRows(m, m.Devices.Select(_devices.Resolve).ToList());
+        }
+        if (plugin) BuildPluginRows();
         UpdatePendingBar();
     }
 
@@ -449,7 +487,34 @@ public partial class MainWindow : FluentWindow
     {
         int n = _editor?.ChangeCount ?? 0;
         PendingBar.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
-        PendingText.Text = $"{Plural(n, "unsaved change")} to the bindings";
+        PendingChangesButton.Content = Plural(n, "change").ToUpperInvariant();
+    }
+
+    private async void ShowEdits_Click(object sender, RoutedEventArgs e)
+    {
+        if (_editor is null || _devices is null || !_editor.IsDirty) return;
+        var changes = _editor.Changes(
+            (map, action) => RbrActions.Get(action, RbrActions.HasSecondaryGears(_editor.Maps[map], _ngpSecondaryGears)).Name,
+            g => _devices.Resolve(g).Name, InputText,
+            key => _pluginDefs.FirstOrDefault(d => string.Equals(d.Key, key, StringComparison.OrdinalIgnoreCase)) is { } d
+                ? $"{d.Page} · {d.Function}" : key);
+
+        var box = new MessageBox
+        {
+            Title = "Unsaved changes",
+            Content = DifferencesView(
+                $"{Plural(changes.Count, "change")} not written to the game yet. The game files are backed up before saving.",
+                "Saved in the game", "After saving", changes),
+            PrimaryButtonText = "Save to game",
+            SecondaryButtonText = "Discard",
+            IsSecondaryButtonEnabled = true,
+            CloseButtonText = "Close",
+            Width = 820,
+            MaxWidth = 820,
+        };
+        var choice = await box.ShowDialogAsync();
+        if (choice == MessageBoxResult.Primary) SaveEdits_Click(sender, e);
+        else if (choice == MessageBoxResult.Secondary) DiscardEdits_Click(sender, e);
     }
 
     private static T? RowOf<T>(object sender) where T : class => (sender as FrameworkElement)?.DataContext as T;
@@ -523,7 +588,7 @@ public partial class MainWindow : FluentWindow
                     foreach (var k in conflicts) _editor.SetPlugin(k, "");
             }
             _editor.SetPlugin(row.Key, value);
-            RefreshEdits();
+            RefreshEdits(game: false, plugin: true);
             SetStatus($"{row.Function} → {input.DeviceName} · {input.Label} (not saved yet)");
         });
     }
@@ -532,7 +597,7 @@ public partial class MainWindow : FluentWindow
     {
         if (RowOf<PluginBindingRow>(sender) is not { } row || _editor is null) return;
         _editor.SetPlugin(row.Key, "");
-        RefreshEdits();
+        RefreshEdits(game: false, plugin: true);
     }
 
     private async void SaveEdits_Click(object sender, RoutedEventArgs e)
@@ -913,9 +978,12 @@ public partial class MainWindow : FluentWindow
     private void ApplyPluginFilter()
     {
         var rows = OnlyBoundBox.IsChecked == true ? _pluginRows.Where(r => !r.IsUnbound).ToList() : _pluginRows;
-        var view = new ListCollectionView(rows);
-        view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(PluginBindingRow.Page)));
-        PluginGrid.ItemsSource = view;
+        _pluginShown = SyncRows(PluginGrid, _pluginShown, rows, source =>
+        {
+            var view = new ListCollectionView(source);
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(PluginBindingRow.Page)));
+            return view;
+        });
         PluginCountText.Text = $"({Plural(_pluginRows.Count(r => !r.IsUnbound), "bind")})";
     }
 
@@ -965,8 +1033,10 @@ public partial class MainWindow : FluentWindow
         ProfileStateIcon.SetResourceReference(ForegroundProperty,
             modified ? "SystemFillColorCautionBrush" : "SystemFillColorSuccessBrush");
         ProfileStateHost.ToolTip = modified
-            ? $"The game files differ from \"{current!.Name}\" (changed in game, in the launcher or here)"
+            ? $"The game files differ from \"{current!.Name}\" (changed in game, in the launcher or here). Click to see what changed."
             : $"The game files match \"{current?.Name}\"";
+        ProfileStateHost.Cursor = modified ? Cursors.Hand : null;
+        _profileModified = modified;
         ApplyCurrentButton.IsEnabled = modified;
         ApplyCurrentHost.ToolTip = modified
             ? $"Apply: write \"{current!.Name}\" to the game files"
@@ -1002,6 +1072,115 @@ public partial class MainWindow : FluentWindow
             ApplyProfile(p);
             SetStatus($"Profile \"{p.Name}\" applied to the game.");
         });
+    }
+
+    /// <summary>The caution icon: lists what the game files hold differently from the current profile.</summary>
+    private async void ProfileState_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (!_profileModified || _rbr is null || _devices is null || CurrentProfileBox.SelectedItem is not InputProfile p) return;
+
+        List<ProfileDifference> diffs;
+        try
+        {
+            diffs = ProfileStore.Differences(_rbr, p, g => _devices.Resolve(g).Name, InputText, _ngpSecondaryGears);
+        }
+        catch (Exception ex)
+        {
+            await Info("Could not compare", ex.Message);
+            return;
+        }
+
+        var box = new MessageBox
+        {
+            Title = $"Changes from \"{p.Name}\"",
+            Content = DifferencesView(diffs.Count == 0
+                    ? "The game files are not byte-for-byte the same as the profile, but no individual value differs."
+                    : $"{Plural(diffs.Count, "difference")} between the profile and the game files (changed in game, in the launcher or here). " +
+                      "Apply profile writes the profile back; Update profile keeps the game's setup and saves it into the profile.",
+                $"In \"{p.Name}\"", "In the game now", diffs),
+            PrimaryButtonText = "Apply profile",
+            SecondaryButtonText = "Update profile",
+            IsSecondaryButtonEnabled = true,
+            CloseButtonText = "Close",
+            Width = 820,
+            MaxWidth = 820,
+        };
+        var choice = await box.ShowDialogAsync();
+        if (choice == MessageBoxResult.Primary)
+        {
+            if (!await ConfirmDiscardEdits() || !await EnsureGameClosed()) return;
+            await Run(() =>
+            {
+                ApplyProfile(p);
+                SetStatus($"Profile \"{p.Name}\" applied to the game.");
+            });
+        }
+        else if (choice == MessageBoxResult.Secondary)
+        {
+            if (!await Confirm("Overwrite profile?", $"Replace \"{p.Name}\" with the setup currently in the game?", "Overwrite"))
+                return;
+            await Run(() =>
+            {
+                ProfileStore.SaveCurrent(_rbr, p.Name, _devices);
+                LoadProfiles();
+                SetStatus($"Profile \"{p.Name}\" updated.");
+            });
+        }
+    }
+
+    /// <summary>Differences grouped by area, as a three-column table: what changed, then the two values side by side.</summary>
+    private static UIElement DifferencesView(string intro, string leftHeader, string rightHeader, List<ProfileDifference> diffs)
+    {
+        static System.Windows.Controls.TextBlock Text(string text, string brush, int row, int column, bool bold = false)
+        {
+            var t = new System.Windows.Controls.TextBlock
+            {
+                Text = text, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 16, 3),
+                FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
+            };
+            t.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, brush);
+            Grid.SetRow(t, row);
+            Grid.SetColumn(t, column);
+            return t;
+        }
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        int row = 0;
+        void AddRow(params UIElement[] cells)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            foreach (var c in cells) grid.Children.Add(c);
+            row++;
+        }
+
+        AddRow(Text("", "TextFillColorTertiaryBrush", row, 0),
+               Text(leftHeader, "TextFillColorTertiaryBrush", row, 1, bold: true),
+               Text(rightHeader, "TextFillColorTertiaryBrush", row, 2, bold: true));
+        foreach (var area in diffs.GroupBy(d => d.Area))
+        {
+            var heading = Text(area.Key, "TextFillColorPrimaryBrush", row, 0, bold: true);
+            heading.Margin = new Thickness(0, 14, 0, 4);
+            heading.FontSize = 15;
+            Grid.SetColumnSpan(heading, 3);
+            AddRow(heading);
+            foreach (var d in area)
+                AddRow(Text(d.Item, "TextFillColorSecondaryBrush", row, 0),
+                       Text(d.Profile, "TextFillColorPrimaryBrush", row, 1),
+                       Text(d.Game, "SystemFillColorCautionBrush", row, 2));
+        }
+
+        var panel = new StackPanel();
+        panel.Children.Add(new System.Windows.Controls.TextBlock { TextWrapping = TextWrapping.Wrap, Text = intro });
+        panel.Children.Add(new ScrollViewer
+        {
+            Content = grid, MaxHeight = 460, Margin = new Thickness(0, 8, 0, 0),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        });
+        return panel;
     }
 
     /// <summary>Backs up the files a profile overwrites, applies it and makes it the current profile.</summary>

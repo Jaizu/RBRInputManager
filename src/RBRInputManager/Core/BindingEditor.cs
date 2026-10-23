@@ -25,12 +25,62 @@ public sealed class BindingEditor
 
     public IReadOnlyList<ActionMap> Maps => _maps;
 
+    /// <summary>Changed actions (per map), RBRControls binds and invert flags: one per entry of <see cref="Changes"/>.</summary>
     public int ChangeCount =>
-        _maps.Count(m => !SameBindings(m, _file.Maps[m.Index])) +
-        _pluginPending.Count(kv => !string.Equals(kv.Value, _pluginOriginal.GetValueOrDefault(kv.Key, ""), StringComparison.Ordinal)) +
+        _maps.Sum(m => ChangedActions(m.Index).Count()) +
+        ChangedPluginKeys.Count() +
         _invertPending.Keys.Count(IsInvertChanged);
 
     public bool IsDirty => ChangeCount > 0;
+
+    private IEnumerable<int> ChangedActions(int map) =>
+        _maps[map].Bindings.Concat(_file.Maps[map].Bindings).Select(b => b.ActionId).Distinct().OrderBy(a => a)
+            .Where(a => IsActionChanged(map, a));
+
+    private IEnumerable<string> ChangedPluginKeys => _pluginPending.Keys.Where(IsPluginChanged);
+
+    /// <summary>
+    /// Every pending edit as readable text (Profile = saved in the game, Game = after saving).
+    /// <paramref name="actionName"/> gets the map and action id, <paramref name="input"/> a device and DirectInput dwType.
+    /// </summary>
+    public List<ProfileDifference> Changes(Func<int, int, string> actionName, Func<Guid, string> deviceName,
+        Func<Guid, uint, string> input, Func<string, string> pluginName)
+    {
+        var result = new List<ProfileDifference>();
+        bool manyMaps = _maps.Count > 1;
+        foreach (var m in _maps)
+            foreach (int a in ChangedActions(m.Index))
+                result.Add(new("Game controls", (manyMaps ? $"Map {m.Index + 1} · " : "") + actionName(m.Index, a),
+                    Describe(_file.Maps[m.Index], a), Describe(m, a)));
+
+        foreach (var key in RbrActions.All.Where(a => a.InvertKey is not null).Select(a => a.InvertKey!).Distinct().Where(IsInvertChanged))
+        {
+            string name = RbrActions.All.First(a => a.InvertKey == key).Name;
+            result.Add(new("Axis inversion", name, _invertOriginal.GetValueOrDefault(key) ? "Inverted" : "Normal",
+                IsInverted(key) ? "Inverted" : "Normal"));
+        }
+
+        foreach (var key in ChangedPluginKeys)
+            result.Add(new("RBRControls", pluginName(key), PluginText(_pluginOriginal.GetValueOrDefault(key, "")), PluginText(PluginValue(key))));
+        return result;
+
+        string Describe(ActionMap m, int actionId)
+        {
+            var list = m.Bindings.Where(b => b.ActionId == actionId)
+                .Select(b => b.DeviceIndex >= 0 && b.DeviceIndex < m.Devices.Count
+                    ? $"{deviceName(m.Devices[b.DeviceIndex])}: {input(m.Devices[b.DeviceIndex], b.ObjectType)}"
+                    : $"Invalid device · 0x{b.ObjectType:X8}")
+                .ToList();
+            return list.Count == 0 ? "Unbound" : string.Join("\n", list);
+        }
+
+        static string PluginText(string raw)
+        {
+            if (raw.Length == 0) return "Unbound";
+            var (device, inputText) = RbrControlsConfig.ParseBind(raw);
+            return device.Length > 0 ? $"{device}: {inputText}" : raw;
+        }
+    }
 
     // ------------------------------------------------------------ game bindings
 

@@ -202,13 +202,26 @@
             <Setter Property="Margin" Value="2,14,0,8"/>
         </Style>
 
+        <!-- Left gripper: the half of a column edge that lies in the next header. It resizes the previous
+             column, so it lights the same accent line on its side of the edge (no line at rest). -->
         <Style x:Key="HeaderGripper" TargetType="Thumb">
             <Setter Property="Width" Value="8"/>
             <Setter Property="Cursor" Value="SizeWE"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
-                        <Border Background="Transparent"/>
+                        <Border Background="Transparent">
+                            <Rectangle x:Name="Line" Width="2" Height="16" HorizontalAlignment="Left" Fill="Transparent"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Line" Property="Fill" Value="{DynamicResource AccentFillColorDefaultBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Line" Property="Height" Value="32"/>
+                                <Setter TargetName="Line" Property="Fill" Value="{DynamicResource AccentFillColorDefaultBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -260,9 +273,34 @@
                             <Thumb x:Name="PART_LeftHeaderGripper" HorizontalAlignment="Left" Style="{StaticResource HeaderGripper}"/>
                             <Thumb x:Name="PART_RightHeaderGripper" HorizontalAlignment="Right" Style="{StaticResource HeaderGripperRight}"/>
                         </Grid>
+                        <!-- WPF owns the grippers' Visibility, so dead edges are hidden by hit testing and opacity -->
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Tag" Value="NoRightEdge">
+                                <Setter TargetName="PART_RightHeaderGripper" Property="IsHitTestVisible" Value="False"/>
+                                <Setter TargetName="PART_RightHeaderGripper" Property="Opacity" Value="0"/>
+                            </Trigger>
+                            <Trigger Property="Tag" Value="NoLeftEdge">
+                                <Setter TargetName="PART_LeftHeaderGripper" Property="IsHitTestVisible" Value="False"/>
+                                <Setter TargetName="PART_LeftHeaderGripper" Property="Opacity" Value="0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!--
+            WPF resizes a column by taking (or giving) width from the columns to its RIGHT: first the star
+            column, then resizable fixed ones (squeezing them to 20px). A star column marked CanUserResize="False"
+            is skipped, which made every drag squeeze the fixed column next to it. So each grid keeps one
+            resizable star column that every edge to its left can use, and edges that can't move anything
+            (a star column's own right edge with only fixed columns after it) are hidden with these styles.
+        -->
+        <Style x:Key="HeaderNoRightEdge" TargetType="DataGridColumnHeader" BasedOn="{StaticResource ColumnHeader}">
+            <Setter Property="Tag" Value="NoRightEdge"/>
+        </Style>
+        <Style x:Key="HeaderNoLeftEdge" TargetType="DataGridColumnHeader" BasedOn="{StaticResource ColumnHeader}">
+            <Setter Property="Tag" Value="NoLeftEdge"/>
         </Style>
 
         <!-- WPF-UI's row template puts the selection pill in its own Auto column, so showing it
@@ -710,7 +748,8 @@
                                            Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
                             </Grid>
                             <!-- Whether the game files still hold the selected profile. -->
-                            <Border x:Name="ProfileStateHost" Margin="8,0,4,0" Background="Transparent" VerticalAlignment="Center">
+                            <Border x:Name="ProfileStateHost" Margin="8,0,4,0" Background="Transparent" VerticalAlignment="Center"
+                                    MouseLeftButtonUp="ProfileState_Click">
                                 <ui:SymbolIcon x:Name="ProfileStateIcon" Symbol="CheckmarkCircle24" FontSize="18"/>
                             </Border>
                         </StackPanel>
@@ -886,8 +925,9 @@
                                     <DataGrid.Columns>
                                         <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="200"/>
                                         <DataGridTemplateColumn Header="Device" CellTemplate="{StaticResource DeviceCell}" Width="250"/>
-                                        <DataGridTextColumn Header="Input" Binding="{Binding Input}" Width="*"/>
-                                        <DataGridTemplateColumn Header="Inverted" CellTemplate="{StaticResource InvertCell}" Width="80"/>
+                                        <DataGridTextColumn Header="Input" Binding="{Binding Input}" Width="*" HeaderStyle="{StaticResource HeaderNoRightEdge}"/>
+                                        <DataGridTemplateColumn Header="Inverted" CellTemplate="{StaticResource InvertCell}" Width="80" CanUserResize="False"
+                                                                HeaderStyle="{StaticResource HeaderNoLeftEdge}"/>
                                         <DataGridTemplateColumn Header="" CellTemplate="{StaticResource GameEditCell}" Width="150" CanUserResize="False"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
@@ -910,7 +950,7 @@
                                     <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="40"/>
                                     <DataGridTemplateColumn Header="Device" CellTemplate="{StaticResource DeviceCell}" Width="280"/>
                                     <DataGridTextColumn Header="VID/PID" Binding="{Binding VidPid}" Width="160"/>
-                                    <DataGridTextColumn Header="Instance GUID" Binding="{Binding Guid}" Width="*" CanUserResize="False"/>
+                                    <DataGridTextColumn Header="Instance GUID" Binding="{Binding Guid}" Width="*" HeaderStyle="{StaticResource HeaderNoRightEdge}"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                         </HeaderedContentControl>
@@ -940,11 +980,13 @@
                                     <StaticResource ResourceKey="Groups"/>
                                 </DataGrid.GroupStyle>
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Function" Binding="{Binding Function}" Width="*" MinWidth="120"/>
-                                    <DataGridTemplateColumn Header="Device" CellTemplate="{StaticResource DeviceCell}" Width="200"/>
-                                    <DataGridTextColumn Header="Input" Binding="{Binding Input}" Width="80"/>
-                                    <DataGridTextColumn Header="Trigger" Binding="{Binding Trigger}" Width="90"/>
-                                    <DataGridTextColumn Header="Context" Binding="{Binding GameMode}" Width="95"/>
+                                    <DataGridTextColumn Header="Function" Binding="{Binding Function}" Width="220"/>
+                                    <DataGridTemplateColumn Header="Device" CellTemplate="{StaticResource DeviceCell}" Width="*" MinWidth="120"
+                                                            HeaderStyle="{StaticResource HeaderNoRightEdge}"/>
+                                    <DataGridTextColumn Header="Input" Binding="{Binding Input}" Width="80" CanUserResize="False"
+                                                        HeaderStyle="{StaticResource HeaderNoLeftEdge}"/>
+                                    <DataGridTextColumn Header="Trigger" Binding="{Binding Trigger}" Width="90" CanUserResize="False"/>
+                                    <DataGridTextColumn Header="Context" Binding="{Binding GameMode}" Width="95" CanUserResize="False"/>
                                     <DataGridTemplateColumn Header="" CellTemplate="{StaticResource PluginEditCell}" Width="110" CanUserResize="False"/>
                                 </DataGrid.Columns>
                             </DataGrid>
@@ -961,7 +1003,7 @@
                                     <StaticResource ResourceKey="Groups"/>
                                 </DataGrid.GroupStyle>
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Setting" Binding="{Binding Name}" Width="*"/>
+                                    <DataGridTextColumn Header="Setting" Binding="{Binding Name}" Width="*" CanUserResize="False"/>
                                     <DataGridTextColumn Header="Value" Binding="{Binding GameValue}" Width="140" CanUserResize="False"/>
                                 </DataGrid.Columns>
                             </DataGrid>
@@ -1036,7 +1078,7 @@
                                     <DataGridTextColumn Header="Game" Binding="{Binding GameValue}" Width="90"/>
                                     <DataGridTextColumn Header="RSF launcher" Binding="{Binding LauncherValue}" Width="110"/>
                                     <DataGridTextColumn Header="Key" Binding="{Binding Source}" Width="290"/>
-                                    <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*" CanUserResize="False"/>
+                                    <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*" HeaderStyle="{StaticResource HeaderNoRightEdge}"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                             </StackPanel>
@@ -1208,12 +1250,14 @@
                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <ui:Button x:Name="PendingChangesButton" Icon="{ui:SymbolIcon List24}" Click="ShowEdits_Click" Margin="0,0,8,0"
+                               ToolTip="See what will be written to the game"/>
                     <ui:Button Content="Discard" Click="DiscardEdits_Click" Margin="0,0,8,0"/>
                     <ui:Button Content="Save to game" Appearance="Primary" Icon="{ui:SymbolIcon Save24}" Click="SaveEdits_Click"/>
                 </StackPanel>
                 <ui:SymbolIcon Symbol="Edit24" FontSize="18" Margin="0,0,10,0" VerticalAlignment="Center"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                <TextBlock x:Name="PendingText" VerticalAlignment="Center" FontWeight="SemiBold"
+                <TextBlock Text="Unsaved changes to the bindings" VerticalAlignment="Center" FontWeight="SemiBold"
                            Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                 <TextBlock Text="  ·  the game files are backed up before saving" VerticalAlignment="Center"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>

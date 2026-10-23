@@ -25,7 +25,7 @@ public sealed class InputProfile
 /// the game bindings (.acm), input.ini (axis inversion), RBRControls.ini and the FFB values.
 /// FFB is stored as individual values because RichardBurnsRally.ini also holds graphics options.
 /// </summary>
-public static class ProfileStore
+public static partial class ProfileStore
 {
     private static readonly string Root = Path.Combine(AppSettings.DataDir, "Profiles");
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
