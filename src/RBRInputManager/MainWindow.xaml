@@ -1,0 +1,359 @@
+<ui:FluentWindow x:Class="RBRInputManager.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="RBR Input Manager" Height="780" Width="1200" MinWidth="860" MinHeight="520"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica" WindowCornerPreference="Round"
+        WindowStartupLocation="CenterScreen">
+    <ui:FluentWindow.Resources>
+        <!-- Green/red dot + text used by every "Status" column. -->
+        <DataTemplate x:Key="StatusCell">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Ellipse x:Name="Dot" Width="10" Height="10" Margin="0,0,8,0" VerticalAlignment="Center"
+                         Fill="{DynamicResource SystemFillColorSuccessBrush}"/>
+                <TextBlock Text="{Binding Status}" VerticalAlignment="Center"/>
+            </StackPanel>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding State}" Value="Missing">
+                    <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource SystemFillColorCriticalBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding State}" Value="None">
+                    <Setter TargetName="Dot" Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <Style TargetType="DataGrid" BasedOn="{StaticResource {x:Type DataGrid}}">
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="GridLinesVisibility" Value="None"/>
+            <Setter Property="CanUserResizeRows" Value="False"/>
+            <Setter Property="SelectionMode" Value="Single"/>
+            <Setter Property="RowHeight" Value="34"/>
+        </Style>
+
+        <Style x:Key="BindingRow" TargetType="DataGridRow" BasedOn="{StaticResource DefaultDataGridRowStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsUnbound}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorTertiaryBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SettingRow" TargetType="DataGridRow" BasedOn="{StaticResource DefaultDataGridRowStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Differs}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource SystemFillColorCautionBackgroundBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <GroupStyle x:Key="Groups">
+            <GroupStyle.HeaderTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="8,14,0,6"
+                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                </DataTemplate>
+            </GroupStyle.HeaderTemplate>
+        </GroupStyle>
+
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <Setter Property="Margin" Value="0,4,0,8"/>
+        </Style>
+        <Style x:Key="CardTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+        </Style>
+        <Style x:Key="CardText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Margin" Value="0,2,0,0"/>
+        </Style>
+    </ui:FluentWindow.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Title="RBR Input Manager">
+            <ui:TitleBar.Icon>
+                <ui:SymbolIcon Symbol="XboxController24"/>
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
+
+        <!-- Update banner -->
+        <Border x:Name="UpdateBanner" Grid.Row="1" Visibility="Collapsed" Margin="16,4,16,0" Padding="16,10"
+                CornerRadius="6" Background="{DynamicResource SystemFillColorAttentionBackgroundBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <ui:Button x:Name="InstallUpdateButton" Content="Update and restart" Appearance="Primary"
+                               Icon="{ui:SymbolIcon ArrowDownload24}" Click="InstallUpdate_Click"/>
+                    <ui:Button Content="Later" Margin="8,0,0,0" Click="DismissUpdate_Click"/>
+                </StackPanel>
+                <ui:SymbolIcon Symbol="ArrowCircleUp24" FontSize="20" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                <TextBlock x:Name="UpdateText" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Install / profile summary -->
+        <DockPanel Grid.Row="2" Margin="16,8,16,0">
+            <ui:Button DockPanel.Dock="Right" Content="Reload" Icon="{ui:SymbolIcon ArrowSync24}" Click="Reload_Click"/>
+            <ui:SymbolIcon Symbol="Folder24" FontSize="18" Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="InstallText" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </DockPanel>
+
+        <TabControl Grid.Row="3" Margin="16,10,16,0">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="XboxController24" Margin="0,0,6,0"/>
+                        <TextBlock Text="Game controls"/>
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="2*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock x:Name="AcmInfo" Style="{StaticResource Hint}"/>
+                    <DataGrid Grid.Row="1" x:Name="GameGrid" RowStyle="{StaticResource BindingRow}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="220"/>
+                            <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="250"/>
+                            <DataGridTextColumn Header="Input" Binding="{Binding Input}" Width="*"/>
+                            <DataGridTextColumn Header="Inverted" Binding="{Binding Inverted}" Width="90"/>
+                            <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource StatusCell}" Width="150"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Grid.Row="2" Style="{StaticResource SectionTitle}" Margin="0,16,0,8"
+                               Text="Devices referenced by the bindings"/>
+                    <DataGrid Grid.Row="3" x:Name="ProfileDevicesGrid">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="40"/>
+                            <DataGridTextColumn Header="Device" Binding="{Binding Name}" Width="260"/>
+                            <DataGridTextColumn Header="VID/PID" Binding="{Binding VidPid}" Width="160"/>
+                            <DataGridTextColumn Header="Instance GUID" Binding="{Binding Guid}" Width="*"/>
+                            <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource StatusCell}" Width="150"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="VehicleCar24" Margin="0,0,6,0"/>
+                        <TextBlock Text="Force Feedback"/>
+                    </StackPanel>
+                </TabItem.Header>
+                <DockPanel Margin="0,12,0,0">
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
+                               Text="Values in RichardBurnsRally.ini and in the RSF launcher config (rsf_launcher\Configs\default.ini). The launcher writes its values into the game on launch; highlighted rows differ."/>
+                    <DataGrid x:Name="FfbGrid" RowStyle="{StaticResource SettingRow}">
+                        <DataGrid.GroupStyle>
+                            <StaticResource ResourceKey="Groups"/>
+                        </DataGrid.GroupStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Setting" Binding="{Binding Name}" Width="280"/>
+                            <DataGridTextColumn Header="Game" Binding="{Binding GameValue}" Width="110"/>
+                            <DataGridTextColumn Header="RSF launcher" Binding="{Binding LauncherValue}" Width="120"/>
+                            <DataGridTextColumn Header="Key" Binding="{Binding Source}" Width="300"/>
+                            <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="PuzzlePiece24" Margin="0,0,6,0"/>
+                        <TextBlock Text="RBRControls"/>
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="5*"/>
+                        <ColumnDefinition Width="16"/>
+                        <ColumnDefinition Width="3*"/>
+                    </Grid.ColumnDefinitions>
+                    <DockPanel>
+                        <CheckBox DockPanel.Dock="Top" x:Name="OnlyBoundBox" Content="Show bound functions only"
+                                  IsChecked="True" Margin="0,0,0,8" Click="OnlyBound_Click"/>
+                        <DataGrid x:Name="PluginGrid" RowStyle="{StaticResource BindingRow}">
+                            <DataGrid.GroupStyle>
+                                <StaticResource ResourceKey="Groups"/>
+                            </DataGrid.GroupStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Function" Binding="{Binding Function}" Width="*" MinWidth="140"/>
+                                <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="185"/>
+                                <DataGridTextColumn Header="Input" Binding="{Binding Input}" Width="90"/>
+                                <DataGridTextColumn Header="Trigger" Binding="{Binding Trigger}" Width="100"/>
+                                <DataGridTextColumn Header="Context" Binding="{Binding GameMode}" Width="110"/>
+                                <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource StatusCell}" Width="135"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                    <DockPanel Grid.Column="2">
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionTitle}" Text="Plugin options"/>
+                        <DataGrid x:Name="ShifterGrid">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Group" Binding="{Binding Group}" Width="85"/>
+                                <DataGridTextColumn Header="Setting" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Value" Binding="{Binding GameValue}" Width="140"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="UsbStick24" Margin="0,0,6,0"/>
+                        <TextBlock Text="Devices"/>
+                    </StackPanel>
+                </TabItem.Header>
+                <DockPanel Margin="0,12,0,0">
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
+                               Text="Controllers DirectInput detects right now. RBR stores bindings by instance GUID: if a device gets a new GUID (another USB port, driver reinstall…), the game stops recognizing its bindings."/>
+                    <DataGrid x:Name="AttachedGrid">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="280"/>
+                            <DataGridTextColumn Header="Product" Binding="{Binding Product}" Width="240"/>
+                            <DataGridTextColumn Header="Instance GUID" Binding="{Binding Guid}" Width="*"/>
+                            <DataGridTextColumn Header="Used by bindings" Binding="{Binding InProfile}" Width="130"/>
+                            <DataGridTemplateColumn Header="Status" CellTemplate="{StaticResource StatusCell}" Width="135"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="PeopleSettings24" Margin="0,0,6,0"/>
+                        <TextBlock Text="Profiles"/>
+                    </StackPanel>
+                </TabItem.Header>
+                <DockPanel Margin="0,12,0,0">
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}"
+                               Text="A profile stores the game bindings, axis inversion, RBRControls binds and force feedback values. Save one per setup (e.g. per wheel) and apply it when you switch hardware. RBR and the RSF launcher must be closed to apply."/>
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                        <ui:Button DockPanel.Dock="Right" Content="Save current setup" Appearance="Primary" Margin="8,0,0,0"
+                                   Icon="{ui:SymbolIcon Save24}" Click="SaveProfile_Click"/>
+                        <ui:TextBox x:Name="ProfileNameBox" PlaceholderText="Profile name, e.g. Simagic + SIMSONN"
+                                    KeyDown="ProfileName_KeyDown"/>
+                    </DockPanel>
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,12,0,0">
+                        <ui:Button x:Name="ApplyProfileButton" Content="Apply to game" Appearance="Primary"
+                                   Icon="{ui:SymbolIcon Play24}" Click="ApplyProfile_Click" IsEnabled="False"/>
+                        <ui:Button x:Name="UpdateProfileButton" Content="Overwrite with current setup" Margin="8,0,0,0"
+                                   Icon="{ui:SymbolIcon ArrowSync24}" Click="UpdateProfile_Click" IsEnabled="False"/>
+                        <ui:Button x:Name="DeleteProfileButton" Content="Delete" Margin="8,0,0,0"
+                                   Icon="{ui:SymbolIcon Delete24}" Click="DeleteProfile_Click" IsEnabled="False"/>
+                    </StackPanel>
+                    <Grid>
+                        <ui:ListView x:Name="ProfileList" SelectionMode="Single" SelectionChanged="ProfileList_SelectionChanged">
+                            <ui:ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="8,8">
+                                        <TextBlock Text="{Binding Name}" Style="{StaticResource CardTitle}" FontSize="14"/>
+                                        <TextBlock Text="{Binding Summary}" Style="{StaticResource CardText}"/>
+                                        <TextBlock Style="{StaticResource CardText}">
+                                            <Run Text="Saved"/> <Run Text="{Binding Updated, Mode=OneWay}"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ui:ListView.ItemTemplate>
+                        </ui:ListView>
+                        <TextBlock x:Name="NoProfilesText" Text="No profiles yet. Type a name above and save your current setup."
+                                   Style="{StaticResource Hint}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                </DockPanel>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="Settings24" Margin="0,0,6,0"/>
+                        <TextBlock Text="Settings"/>
+                    </StackPanel>
+                </TabItem.Header>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,12,0,0" MaxWidth="900" HorizontalAlignment="Stretch">
+                        <ui:CardControl Icon="{ui:SymbolIcon Folder24}" Margin="0,0,0,6">
+                            <ui:CardControl.Header>
+                                <StackPanel>
+                                    <TextBlock Text="RBR install folder" Style="{StaticResource CardTitle}"/>
+                                    <TextBlock x:Name="SettingsPathText" Style="{StaticResource CardText}"/>
+                                </StackPanel>
+                            </ui:CardControl.Header>
+                            <ui:Button Content="Change…" Click="Browse_Click"/>
+                        </ui:CardControl>
+
+                        <ui:CardControl Icon="{ui:SymbolIcon DarkTheme24}" Margin="0,0,0,6">
+                            <ui:CardControl.Header>
+                                <StackPanel>
+                                    <TextBlock Text="App theme" Style="{StaticResource CardTitle}"/>
+                                    <TextBlock Text="Follow Windows or force light or dark mode." Style="{StaticResource CardText}"/>
+                                </StackPanel>
+                            </ui:CardControl.Header>
+                            <ComboBox x:Name="ThemeBox" MinWidth="160" SelectionChanged="Theme_Changed">
+                                <ComboBoxItem Content="Use Windows setting" Tag="System"/>
+                                <ComboBoxItem Content="Light" Tag="Light"/>
+                                <ComboBoxItem Content="Dark" Tag="Dark"/>
+                            </ComboBox>
+                        </ui:CardControl>
+
+                        <ui:CardControl Icon="{ui:SymbolIcon History24}" Margin="0,0,0,6">
+                            <ui:CardControl.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Original game files" Style="{StaticResource CardTitle}"/>
+                                    <TextBlock x:Name="BackupText" Style="{StaticResource CardText}"/>
+                                </StackPanel>
+                            </ui:CardControl.Header>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="Open folder" Click="OpenBackupFolder_Click" Margin="0,0,8,0"/>
+                                <ui:Button x:Name="RestoreButton" Content="Restore originals" Icon="{ui:SymbolIcon ArrowUndo24}"
+                                           Click="Restore_Click"/>
+                            </StackPanel>
+                        </ui:CardControl>
+
+                        <ui:CardControl Icon="{ui:SymbolIcon ArrowDownload24}" Margin="0,0,0,6">
+                            <ui:CardControl.Header>
+                                <StackPanel>
+                                    <TextBlock Text="Updates" Style="{StaticResource CardTitle}"/>
+                                    <TextBlock x:Name="VersionText" Style="{StaticResource CardText}"/>
+                                </StackPanel>
+                            </ui:CardControl.Header>
+                            <ui:Button x:Name="CheckUpdatesButton" Content="Check for updates" Click="CheckUpdates_Click"/>
+                        </ui:CardControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <TextBlock Grid.Row="4" x:Name="StatusText" Margin="18,8,18,10" TextTrimming="CharacterEllipsis"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+    </Grid>
+</ui:FluentWindow>
