@@ -826,6 +826,7 @@ public partial class MainWindow : FluentWindow
 
     private void ShowStrength(float? strength)
     {
+        StrengthFullButton.Visibility = strength is < 0.995f ? Visibility.Visible : Visibility.Collapsed;
         if (strength is null)
         {
             StrengthText.Text = "—";
@@ -849,8 +850,19 @@ public partial class MainWindow : FluentWindow
             SetNotice(StrengthNotice, StrengthNoticeIcon, SymbolRegular.Warning24, "SystemFillColorCautionBackgroundBrush", "SystemFillColorCautionBrush");
             StrengthNoticeText.Text =
                 $"The in-game strength is at {percent}%. In RBR it should stay at 100%: lowering it here clips detail. " +
-                "Set it back to 100% in RBR (Options → Controls → Force Feedback) and adjust the force in your wheelbase software instead.";
+                "Set it back to 100% (here or in RBR) and adjust the force in your wheelbase software instead.";
         }
+    }
+
+    private async void StrengthFull_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rbr is null || !await EnsureGameClosed()) return;
+        await Run(() =>
+        {
+            RbrProfileFile.SetForceFeedbackStrength(_rbr.ProfileRbr, 1f);
+            LoadFfb();
+            SetStatus($"In-game strength set to 100%. The profile as it was is kept in {RbrProfileFile.BackupPath(_rbr.ProfileRbr)}");
+        });
     }
 
     private static void SetNotice(Border notice, SymbolIcon icon, SymbolRegular symbol, string background, string iconBrush)

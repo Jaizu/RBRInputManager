@@ -970,6 +970,10 @@
                             </HeaderedContentControl.Header>
                             <StackPanel>
                                 <DockPanel>
+                                    <ui:Button x:Name="StrengthFullButton" DockPanel.Dock="Right" Margin="12,0,0,0"
+                                               VerticalAlignment="Center" Appearance="Primary" Content="Set to 100%"
+                                               Icon="{ui:SymbolIcon ArrowMaximize24}" Click="StrengthFull_Click"
+                                               ToolTip="Write 100% to the in-game strength in the RBR profile"/>
                                     <TextBlock x:Name="StrengthText" DockPanel.Dock="Right" FontSize="28" FontWeight="SemiBold"
                                                MinWidth="90" TextAlignment="Right" VerticalAlignment="Center"
                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>

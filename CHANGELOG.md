@@ -11,11 +11,12 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
   as steering.
 
 ### Fixed
-- **RBR stuck loading the profile**: "Set to 100%" for the in-game force feedback strength patched
-  pf<PROFILE>.rbr without updating the four checksum bytes at its start, so RBR rejected the profile and kept
-  retrying. The button is gone; the strength is shown read-only and has to be changed in RBR. If you used it,
-  put back the untouched copy from `%AppData%\RBRInputManager\ProfileBackups` (game closed) and set the
-  strength in game.
+- **RBR stuck loading the profile** after "Set to 100%" (in-game force feedback strength): the app patched
+  pf<PROFILE>.rbr without updating the checksum in its first four bytes, so RBR rejected the profile and kept
+  retrying. The real encoding and checksum are now known (taken from the game's own code: a bytewise cipher with
+  a fixed 500-byte key, and a CRC-32 with RBR's own, faulty table), so the button writes a valid profile and
+  reads it back to verify, putting the old file back if it doesn't. If RBR got stuck before this fix, put back
+  the untouched copy from `%AppData%\RBRInputManager\ProfileBackups` (game closed).
 
 ## [0.3.0] - 2026-10-23
 
