@@ -46,7 +46,11 @@ public static partial class UsbHistory
                 if (!result.TryGetValue(key, out var prev) || t > prev) result[key] = t;
             }
         }
-        catch { /* history is best effort */ }
+        catch (Exception ex)
+        {
+            // History is best effort: missing devices just show without a "last seen" date.
+            Log.WarnOnce("usbhistory", LogArea.GameControls, "Could not read when Windows last saw each USB device", ex);
+        }
         finally
         {
             SetupDiDestroyDeviceInfoList(set);

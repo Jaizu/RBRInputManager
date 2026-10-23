@@ -14,10 +14,19 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
   profile, then apply the profile or update it with the game's setup.
 - **Pending changes list**: the unsaved-changes bar has an "N CHANGES" button listing each edit (before and
   after saving), with Save and Discard.
+- **Logs** tab (after FORCE FEEDBACK): a table, with resizable columns like the rest of the app, of what the
+  app read and changed: the controllers and maps it found, each binding edit as before → after, every file
+  written or backed up (with the INI values set), settings changes, profiles, update checks, and errors,
+  including the ones it used to skip silently. It opens on every page's entries; pick one page, and this
+  session or one of the earlier ones. Copy puts the entries on the clipboard with the app and
+  Windows versions, for bug reports. Every session is saved to `%AppData%\RBRInputManager\Logs` as a readable
+  text file, and the last 20 are kept. Unexpected crashes are logged too.
 
 ### Changed
 - Editing bindings, binds or axis inversion is much faster: only the rows that changed are redrawn, and
   device names from the registry are looked up once per reload. The change count is now per action.
+- The status bar shows an icon for the kind of message (done, warning, error), its tooltip has the details, and
+  clicking it opens the Logs tab on the page the message belongs to.
 
 ### Fixed
 - **Column resizing**: double-clicking a column edge or dragging it could squeeze the next column to a sliver

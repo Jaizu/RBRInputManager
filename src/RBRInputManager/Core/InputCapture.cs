@@ -97,7 +97,12 @@ public sealed class InputCapture : IDisposable
                 dev.Acquire();
                 _joys.Add(new Joy { Device = dev, Guid = inst.InstanceGuid, Name = inst.InstanceName.Trim(), Axes = axes, Buttons = buttons });
             }
-            catch { /* a device that can't be opened just isn't offered */ }
+            catch (Exception ex)
+            {
+                // A device that can't be opened just isn't offered.
+                Log.WarnOnce($"capture:{inst.InstanceGuid}", LogArea.GameControls,
+                    $"Could not open {inst.InstanceName.Trim()} to read its inputs: it can't be bound or shown live", ex);
+            }
         }
 
         try
@@ -107,7 +112,11 @@ public sealed class InputCapture : IDisposable
             _keyboard.SetDataFormat<RawKeyboardState>();
             _keyboard.Acquire();
         }
-        catch { _keyboard = null; }
+        catch (Exception ex)
+        {
+            _keyboard = null;
+            Log.WarnOnce("capture:keyboard", LogArea.GameControls, "Could not open the keyboard to read keys", ex);
+        }
     }
 
     /// <summary>DIDFT dwType of an object: type/attribute flags plus the instance number in bits 8–23.</summary>

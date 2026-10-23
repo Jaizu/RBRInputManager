@@ -216,8 +216,6 @@ public sealed class BindingEditor
             if (File.Exists(rbr.InputIni)) backup = GameFiles.Backup(rbr, RbrInstallation.InputIniFile);
             GameFiles.SetIniValues(rbr.InputIni, invertChanges.Select(k => ("Settings", k, IsInverted(k) ? "true" : "false")));
         }
-        // Backups\<timestamp>\<relative path>: report the timestamp folder.
-        if (backup is null) return null;
-        return Path.Combine(GameFiles.BackupsDir, Path.GetRelativePath(GameFiles.BackupsDir, backup).Split(Path.DirectorySeparatorChar)[0]);
+        return backup is null ? null : GameFiles.BackupFolder(backup);
     }
 }

@@ -13,6 +13,7 @@ RBR stores controller bindings by DirectInput *instance GUID*. When Windows give
 - **Force feedback**: the in-game strength slider (warns when it isn't at 100%), plus values from `RichardBurnsRally.ini` next to the RSF launcher's copy (`rsf_launcher\Configs\default.ini`) and any per-car overrides.
 - **Profiles**: save the current bindings, axis inversion, RBRControls binds and FFB as a named profile; switch from the header selector, which also shows when the game no longer matches.
 - **Original files backup**: the first time the app opens an install, it copies the files it can modify, along with their permissions, attributes and timestamps. **Settings → Restore originals** puts them back.
+- **Logs**: a tab listing what the app read and changed (files written, each binding change, backups, settings, errors) for one page or all of them, in this session or one of the last 20, which are kept as readable text files.
 - **Updates**: checks GitHub releases on startup and can update itself.
 - Windows 11 (Fluent / Mica) look with light and dark themes.
 
@@ -20,7 +21,7 @@ RBR stores controller bindings by DirectInput *instance GUID*. When Windows give
 
 Get `RBRInputManager.exe` from [Releases](https://github.com/Jaizu/RBRInputManager/releases). It is a single self-contained exe, so there is nothing to install.
 
-The app stores its data in `%AppData%\RBRInputManager` (settings, profiles, original-file backups).
+The app stores its data in `%AppData%\RBRInputManager` (settings, profiles, original-file backups, session logs in `Logs`).
 
 ## Building
 

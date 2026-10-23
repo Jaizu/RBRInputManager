@@ -452,6 +452,65 @@
             </Style.Triggers>
         </Style>
 
+        <!-- Logs: warnings and errors stand out; rows grow with the entry's details. -->
+        <Style x:Key="LogRow" TargetType="DataGridRow" BasedOn="{StaticResource GridRow}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Level}" Value="Warning">
+                    <Setter Property="Background" Value="{DynamicResource SystemFillColorCautionBackgroundBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="Error">
+                    <Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- Every cell starts at the top line, next to the message rather than the middle of its details. -->
+        <Style x:Key="LogCell" TargetType="DataGridCell" BasedOn="{StaticResource GridCell}">
+            <Setter Property="VerticalContentAlignment" Value="Top"/>
+        </Style>
+        <Style x:Key="LogText" TargetType="TextBlock">
+            <Setter Property="Margin" Value="0,8,0,8"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <DataTemplate x:Key="LogLevelCell">
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,8">
+                <ui:SymbolIcon x:Name="Icon" Symbol="Info24" FontSize="16" Margin="0,0,6,0"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                <TextBlock Text="{Binding LevelName}"/>
+            </StackPanel>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Level}" Value="Done">
+                    <Setter TargetName="Icon" Property="Symbol" Value="CheckmarkCircle24"/>
+                    <Setter TargetName="Icon" Property="Foreground" Value="{DynamicResource SystemFillColorSuccessBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="Warning">
+                    <Setter TargetName="Icon" Property="Symbol" Value="Warning24"/>
+                    <Setter TargetName="Icon" Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Level}" Value="Error">
+                    <Setter TargetName="Icon" Property="Symbol" Value="ErrorCircle24"/>
+                    <Setter TargetName="Icon" Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+        <!-- Message with its details (files written, before and after values) as a list below it. -->
+        <DataTemplate x:Key="LogMessageCell">
+            <StackPanel Margin="0,8,0,8">
+                <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
+                <ItemsControl ItemsSource="{Binding Details}" Focusable="False">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Margin="0,3,0,0">
+                                <TextBlock Text="·" Margin="2,0,8,0" FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </DockPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </DataTemplate>
+
         <!-- Category toggle inside grids: accent bar + accent name + count + chevron. -->
         <Style x:Key="GroupToggle" TargetType="ToggleButton">
             <Setter Property="IsChecked" Value="True"/>
@@ -815,11 +874,20 @@
                 </TabItem.Header>
             </TabItem>
             <!-- ============================================================ Force feedback -->
-            <TabItem>
+            <TabItem x:Name="FfbTab">
                 <TabItem.Header>
                     <StackPanel Orientation="Horizontal">
                         <ui:SymbolIcon Symbol="VehicleCar24" Margin="0,0,6,0"/>
                         <TextBlock Text="FORCE FEEDBACK" Style="{StaticResource TabTitle}"/>
+                    </StackPanel>
+                </TabItem.Header>
+            </TabItem>
+            <!-- ============================================================ Logs -->
+            <TabItem x:Name="LogsTab">
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <ui:SymbolIcon Symbol="DocumentText24" Margin="0,0,6,0"/>
+                        <TextBlock Text="LOGS" Style="{StaticResource TabTitle}"/>
                     </StackPanel>
                 </TabItem.Header>
             </TabItem>
@@ -1086,6 +1154,53 @@
                     </StackPanel>
                 </ScrollViewer>
             </Border>
+            <!-- The log fills the page and scrolls inside its card, so the session and page pickers stay in view. -->
+            <Border x:Name="LogsPage" Visibility="Collapsed">
+                <DockPanel Margin="0,12,6,12">
+                    <TextBlock x:Name="LogFileText" DockPanel.Dock="Bottom" Style="{StaticResource CardText}" Margin="2,8,0,0"/>
+                    <HeaderedContentControl Style="{StaticResource Section}" Margin="0">
+                        <HeaderedContentControl.Header>
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <ComboBox x:Name="LogSessionBox" MinWidth="240" VerticalAlignment="Center" DisplayMemberPath="Label"
+                                              SelectionChanged="LogSession_SelectionChanged"
+                                              ToolTip="Log to show: this session or one of the last ones kept"/>
+                                    <ComboBox x:Name="LogAreaBox" MinWidth="200" Margin="8,0,0,0" VerticalAlignment="Center"
+                                              DisplayMemberPath="Label" SelectionChanged="LogArea_SelectionChanged"
+                                              ToolTip="Show one page's entries or every page's"/>
+                                    <ui:Button x:Name="CopyLogButton" Content="Copy" Icon="{ui:SymbolIcon Copy24}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center" Click="CopyLog_Click"
+                                               ToolTip="Copy the entries shown, with the app version and Windows details, e.g. for a bug report"/>
+                                    <ui:Button Content="Open folder" Icon="{ui:SymbolIcon FolderOpen24}" Margin="8,0,0,0"
+                                               VerticalAlignment="Center" Click="OpenLogFolder_Click"
+                                               ToolTip="Open the logs folder with this log's file selected"/>
+                                </StackPanel>
+                                <ui:SymbolIcon Symbol="DocumentText24" Style="{StaticResource SectionIcon}"/>
+                                <TextBlock Text="LOGS" Style="{StaticResource SectionHeading}"/>
+                                <TextBlock x:Name="LogCountText" Style="{StaticResource SectionCount}"/>
+                            </DockPanel>
+                        </HeaderedContentControl.Header>
+                        <Grid>
+                            <DataGrid x:Name="LogGrid" RowStyle="{StaticResource LogRow}" CellStyle="{StaticResource LogCell}" Sorting="LogGrid_Sorting"
+                                      RowHeight="NaN" MinRowHeight="34" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.ScrollUnit="Pixel">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time" Binding="{Binding TimeText}" SortMemberPath="Seq" Width="80" ElementStyle="{StaticResource LogText}"/>
+                                    <DataGridTemplateColumn Header="Level" CellTemplate="{StaticResource LogLevelCell}" SortMemberPath="Level" Width="110"/>
+                                    <DataGridTextColumn Header="Page" Binding="{Binding AreaName}" Width="130" ElementStyle="{StaticResource LogText}"/>
+                                    <DataGridTemplateColumn Header="Message" CellTemplate="{StaticResource LogMessageCell}" SortMemberPath="Message" Width="*"
+                                                            HeaderStyle="{StaticResource HeaderNoRightEdge}"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel x:Name="LogEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
+                                <ui:SymbolIcon Symbol="DocumentText24" FontSize="40" HorizontalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                <TextBlock x:Name="LogEmptyText" Style="{StaticResource SectionTitle}" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </HeaderedContentControl>
+                </DockPanel>
+            </Border>
             <Border x:Name="ProfilesPagePanel" Visibility="Collapsed">
                 <ScrollViewer Style="{StaticResource Page}">
                     <StackPanel>
@@ -1284,10 +1399,26 @@
                         <ui:SymbolIcon x:Name="SettingsIcon" Symbol="Settings24" FontSize="16"/>
                     </ui:Button>
                 </StackPanel>
-                <ui:SymbolIcon Symbol="Info24" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                <TextBlock x:Name="StatusText" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                <!-- Last message, with its level's icon; click to open the log it was written to. -->
+                <Border x:Name="StatusHost" HorizontalAlignment="Left" Background="Transparent" Cursor="Hand"
+                        MouseLeftButtonUp="Status_Click">
+                    <DockPanel>
+                        <ui:SymbolIcon x:Name="StatusIcon" Symbol="Info24" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock x:Name="StatusText" TextTrimming="CharacterEllipsis" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsMouseOver, ElementName=StatusHost}" Value="True">
+                                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </DockPanel>
+                </Border>
             </DockPanel>
         </Border>
         <!-- Input capture: dims the window and waits for a button, key or axis. Esc cancels. -->

@@ -103,6 +103,7 @@ public sealed class RbrProfileFile
         {
             Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
             File.WriteAllBytes(backup, original);
+            Log.Info(Log.Context, $"Kept the RBR profile as it was in {backup}");
         }
 
         float strength = Math.Clamp(value, 0f, 1f);

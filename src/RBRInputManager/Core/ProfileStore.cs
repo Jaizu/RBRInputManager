@@ -63,7 +63,10 @@ public static partial class ProfileStore
                 p.Dir = dir;
                 list.Add(p);
             }
-            catch { /* skip broken profile folders */ }
+            catch (Exception ex)
+            {
+                Log.WarnOnce($"profile:{dir}", LogArea.Profiles, $"Skipped a profile folder that can't be read: {dir}", ex);
+            }
         }
         return list.OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
@@ -100,6 +103,7 @@ public static partial class ProfileStore
         string dir = existing?.Dir ?? UniqueDir(name);
         Directory.CreateDirectory(dir);
 
+        var written = new List<string>();
         foreach (var (stored, game) in Files(rbr))
         {
             string? src = source(game);
@@ -110,8 +114,13 @@ public static partial class ProfileStore
                 File.Copy(src, dst, true);
                 // The game's .acm is often read-only; the profile copy must stay writable/deletable.
                 File.SetAttributes(dst, FileAttributes.Normal);
+                written.Add($"{stored} ← {src}");
             }
-            else if (File.Exists(dst)) File.Delete(dst);
+            else if (File.Exists(dst))
+            {
+                File.Delete(dst);
+                written.Add($"{stored} removed: {game} doesn't exist");
+            }
         }
 
         var profile = new InputProfile
@@ -141,19 +150,24 @@ public static partial class ProfileStore
         }
 
         File.WriteAllText(Path.Combine(dir, "profile.json"), JsonSerializer.Serialize(profile, Json));
+        written.Add($"profile.json ({profile.Ffb.Count} force feedback values)");
+        Log.Info(LogArea.Profiles, $"Wrote the files of the profile \"{name}\" in {dir}", written);
         return profile;
     }
 
-    /// <summary>Writes a profile into the game. Files keep their existing permissions.</summary>
-    public static void Apply(RbrInstallation rbr, InputProfile profile)
+    /// <summary>Writes a profile into the game. Files keep their existing permissions. Returns the files written.</summary>
+    public static List<string> Apply(RbrInstallation rbr, InputProfile profile)
     {
+        var written = new List<string>();
         foreach (var (stored, game) in Files(rbr))
         {
             string src = Path.Combine(profile.Dir, stored);
-            if (File.Exists(src)) GameFiles.WriteInPlace(rbr.Path(game), File.ReadAllBytes(src));
+            if (!File.Exists(src)) continue;
+            GameFiles.WriteInPlace(rbr.Path(game), File.ReadAllBytes(src));
+            written.Add(game);
         }
 
-        if (profile.Ffb.Count == 0) return;
+        if (profile.Ffb.Count == 0) return written;
         var values = profile.Ffb.Select(kv =>
         {
             int dot = kv.Key.IndexOf('.');
@@ -161,12 +175,17 @@ public static partial class ProfileStore
         }).ToList();
 
         GameFiles.SetIniValues(rbr.GameIni, values);
+        written.Add(RbrInstallation.GameIniFile);
 
         // The RSF launcher rewrites RichardBurnsRally.ini from its own copy on launch,
         // so update the keys it already tracks there too.
         if (File.Exists(rbr.LauncherIni))
+        {
             GameFiles.SetIniValues(rbr.LauncherIni,
                 values.Select(v => ("RichardBurnsRally", $"{v.Item1}.{v.Item2}", v.Value)), onlyExistingKeys: true);
+            written.Add(RbrInstallation.LauncherIniFile);
+        }
+        return written;
     }
 
     /// <summary>True when the game files hold exactly what the profile would write.</summary>
@@ -194,6 +213,7 @@ public static partial class ProfileStore
         foreach (var f in Directory.GetFiles(profile.Dir, "*", SearchOption.AllDirectories))
             File.SetAttributes(f, FileAttributes.Normal);
         Directory.Delete(profile.Dir, true);
+        Log.Info(LogArea.Profiles, $"Deleted the folder {profile.Dir}");
     }
 
     private static string UniqueDir(string name)

@@ -51,6 +51,9 @@ public partial class MainWindow : FluentWindow
     private readonly System.Windows.Threading.DispatcherTimer _liveTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private bool _ngpSecondaryGears;
     private bool _profileModified;
+    private float? _ffbStrength;
+    private List<SettingRow> _ffbRows = new();
+    private LogArea? _statusArea;
     private ObservableCollection<GameBindingRow>? _gameShown;
     private ObservableCollection<PluginBindingRow>? _pluginShown;
 
@@ -63,6 +66,8 @@ public partial class MainWindow : FluentWindow
 
     private static void ForwardWheel(object sender, MouseWheelEventArgs e)
     {
+        // The log is the one grid that scrolls by itself (it can hold thousands of entries).
+        if (sender is System.Windows.Controls.DataGrid { Name: "LogGrid" }) return;
         if (e.Handled || sender is not UIElement el || VisualTreeHelper.GetParent(el) is not UIElement parent) return;
         e.Handled = true;
         parent.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta) { RoutedEvent = MouseWheelEvent, Source = sender });
@@ -79,6 +84,7 @@ public partial class MainWindow : FluentWindow
         OnlyBoundBox.IsChecked = _settings.PluginBoundOnly;
         ApplicationThemeManager.Changed += (_, _) => ApplyAccent();
         _liveTimer.Tick += (_, _) => UpdateLiveInputs();
+        Log.Added += _ => Dispatcher.BeginInvoke(OnLogAdded);
         _liveTimer.Start();
         Activated += (_, _) => UpdateMonitorPause();
         Deactivated += (_, _) => UpdateMonitorPause();
@@ -97,11 +103,13 @@ public partial class MainWindow : FluentWindow
             ApplyTheme(_settings.Theme);
             _initializing = false;
 
-            string? root = RbrInstallation.IsValid(_settings.RbrPath) ? _settings.RbrPath : RbrInstallation.Detect();
+            bool saved = RbrInstallation.IsValid(_settings.RbrPath);
+            string? root = saved ? _settings.RbrPath : RbrInstallation.Detect();
             if (root is null)
-                SetStatus("RBR install not found. Pick the folder in Settings → RBR install folder.");
+                Report(LogArea.Settings, "RBR install not found. Pick the folder in Settings → RBR install folder.",
+                    _settings.RbrPath is { } old ? new[] { $"The saved folder is no longer an RBR install: {old}" } : null, LogLevel.Warning);
             else
-                Open(root);
+                Open(root, saved ? "the folder saved in settings" : "found automatically");
 
             await CheckForUpdatesAsync(userInitiated: false);
         };
@@ -123,6 +131,7 @@ public partial class MainWindow : FluentWindow
             e.Cancel = true;
             if (await Confirm("Discard unsaved changes?", $"You have {Plural(_editor.ChangeCount, "unsaved change")} to the bindings.", "Discard and close"))
             {
+                LogChanges(LogLevel.Info, n => $"Closed without saving: {Plural(n, "change")} discarded", PendingChanges());
                 _closeConfirmed = true;
                 Close();
             }
@@ -138,21 +147,27 @@ public partial class MainWindow : FluentWindow
 
     // ---------------------------------------------------------------- install & loading
 
-    private void Open(string root)
+    /// <param name="how">How the folder was chosen, for the log ("found automatically"…).</param>
+    private void Open(string root, string how)
     {
         _rbr = new RbrInstallation(root, _settings.RbrProfile);
         _settings.RbrPath = root;
         _settings.Save();
 
         InstallText.Text = $"Richard Burns Rally · {root}";
-        string how = _rbr.Profiles.Count switch
+        string which = _rbr.Profiles.Count switch
         {
             0 => "not created yet",
             1 => "the only one in SavedGames",
             _ when _rbr.ProfileChosen => "picked in Settings",
             _ => "the most recently played; change it in Settings",
         };
-        InstallSubText.Text = $"RBR profile {_rbr.Profile} ({how})";
+        InstallSubText.Text = $"RBR profile {_rbr.Profile} ({which})";
+        Log.Info(LogArea.Settings, $"Opened the RBR install {root} ({how})", new[]
+        {
+            $"RBR profile: {_rbr.Profile} ({which})",
+            $"Profiles in SavedGames: {(_rbr.Profiles.Count == 0 ? "none" : string.Join(", ", _rbr.Profiles))}",
+        });
         SettingsPathText.Text = root;
         SettingsProfileText.Text = $"Bindings are read from SavedGames\\pf{_rbr.Profile}.acm. " +
             (_rbr.Profiles.Count > 1 ? "By default the most recently played profile is used." : "This is the only profile in this install.");
@@ -164,19 +179,27 @@ public partial class MainWindow : FluentWindow
 
         // First time we see this install: keep a pristine copy before the app ever writes to it.
         string? backupNote = null;
+        var backupLevel = LogLevel.Done;
         try
         {
             if (OriginalBackup.EnsureCreated(_rbr, UpdateService.CurrentVersion.ToString(3)) is { } created)
+            {
                 backupNote = $"Original game files backed up ({created.Files.Count(f => f.Existed)} files with their permissions).";
+                Log.Done(LogArea.Settings, "Backed up the original game files: the first time the app opens this install",
+                    created.Files.Select(f => f.Existed ? f.RelativePath : $"{f.RelativePath} (does not exist, nothing to back up)")
+                        .Append($"Kept in {Path.Combine(AppSettings.DataDir, "Originals")}"));
+            }
         }
         catch (Exception ex)
         {
             backupNote = $"Could not back up the original game files: {ex.Message}";
+            backupLevel = LogLevel.Error;
+            Log.Error(LogArea.Settings, "Could not back up the original game files", ex);
         }
         RefreshBackupInfo();
 
         Reload();
-        if (backupNote is not null) SetStatus(backupNote);
+        if (backupNote is not null) SetStatus(backupNote, backupLevel, LogArea.Settings);
     }
 
     private void Reload()
@@ -186,37 +209,222 @@ public partial class MainWindow : FluentWindow
         _devices = new DeviceCatalog();
 
         var errors = new List<string>();
-        void Try(string what, Action load)
+        var level = LogLevel.Info;
+        void Try(LogArea area, string what, Action load)
         {
             try { load(); }
-            catch (Exception ex) { errors.Add($"{what}: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                errors.Add($"{what}: {ex.Message}");
+                // A missing file (no RBR profile yet, RBRControls not installed) is how this install is, not a failure.
+                if (ex is FileNotFoundException)
+                {
+                    Log.Warn(area, $"{what}: {ex.Message}");
+                    if (level != LogLevel.Error) level = LogLevel.Warning;
+                }
+                else
+                {
+                    Log.Error(area, $"Could not read {what}", ex);
+                    level = LogLevel.Error;
+                }
+            }
         }
 
         _editor = null;
         _ngpSecondaryGears = _rbr.SecondaryGearControls;
-        Try("Controls", LoadGameBindings);
-        Try("RBRControls", LoadPlugin);
+        Try(LogArea.GameControls, "Controls", LoadGameBindings);
+        Try(LogArea.RbrControls, "RBRControls", LoadPlugin);
         if (_acm is not null)
             _editor = new BindingEditor(_acm, _pluginDefs.ToDictionary(d => d.Key, d => d.RawBinding, StringComparer.OrdinalIgnoreCase),
                 BindingEditor.LoadInverted(_rbr));
         ShowMap((MapBox.SelectedItem as MapItem)?.Map);
         BuildPluginRows();
         UpdatePendingBar();
-        Try("Force feedback", LoadFfb);
-        Try("Default profile", () => ProfileStore.EnsureDefault(_rbr, _devices));
+        Try(LogArea.ForceFeedback, "Force feedback", LoadFfb);
+        bool hadDefault = ProfileStore.Exists(ProfileStore.DefaultName);
+        Try(LogArea.Profiles, "Default profile", () =>
+        {
+            if (ProfileStore.EnsureDefault(_rbr, _devices) && !hadDefault)
+                Log.Done(LogArea.Profiles, $"Created the \"{ProfileStore.DefaultName}\" profile from the original game files");
+        });
         LoadProfiles();
         RestartMonitor();
 
         if (_devices.DirectInputError is not null)
+        {
             errors.Add($"DirectInput: {_devices.DirectInputError}");
+            Log.Error(LogArea.GameControls, "DirectInput is not available: controllers can't be listed or read",
+                details: new[] { _devices.DirectInputError });
+            level = LogLevel.Error;
+        }
+        LogLoaded();
 
         SetStatus(errors.Count == 0
             ? $"Loaded {DateTime.Now:HH:mm:ss} · {_devices.Attached.Count} controllers connected"
-            : string.Join("   |   ", errors));
+            : string.Join("   |   ", errors), level);
         WarmUpPages();
     }
 
-    private void SetStatus(string text) => StatusText.Text = text;
+    /// <summary>After a reload: what was read from the game files, a few entries per page.</summary>
+    private void LogLoaded()
+    {
+        if (_rbr is null || _devices is null) return;
+        var devices = _devices;
+        string Device(Guid g)
+        {
+            var d = devices.Resolve(g);
+            return d.Connected ? d.Name : $"{d.Name} (not connected)";
+        }
+        try
+        {
+            var attached = devices.AttachedGuids.Select(devices.Resolve).OrderBy(d => d.Name).ToList();
+            Log.Info(LogArea.GameControls, attached.Count == 0 ? "No controllers connected" : $"{Plural(attached.Count, "controller")} connected",
+                attached.Select(d => $"{d.Name} · {d.VidPid ?? "no VID/PID"} · {d.InstanceGuid.ToString("B").ToUpperInvariant()}"));
+
+            if (_acm is not null && _editor is not null)
+            {
+                var active = _acm.ActiveMap(devices.AttachedGuids);
+                var details = _acm.Maps.Select(m =>
+                    $"Map {m.Index + 1}{(m.Index == active?.Index ? " (active)" : "")} · {Plural(m.Bindings.Count, "binding")} · " +
+                    (m.Devices.Count == 0 ? "no devices" : string.Join(", ", m.Devices.Select(Device)))).ToList();
+                var inverted = RbrActions.All.Where(a => a.InvertKey is not null && _editor.IsInverted(a.InvertKey)).Select(a => a.Name).ToList();
+                details.Add($"Inverted axes (input.ini): {(inverted.Count == 0 ? "none" : string.Join(", ", inverted))}");
+                details.Add($"NGPCarMenu secondary gear up/down: {(_ngpSecondaryGears ? "on" : "off")}");
+                Log.Info(LogArea.GameControls, $"Read {_rbr.AcmFile}: {Plural(_acm.Maps.Count, "control map")}" +
+                    (active is null ? "" : $", RBR uses map {active.Index + 1} with the controllers connected now"), details);
+
+                if (active is null && _acm.Maps.LastOrDefault() is { } newest)
+                {
+                    var (add, remove) = MapAdapter.Diff(newest, devices.AttachedGuids);
+                    Log.Warn(LogArea.GameControls, "No control map matches the controllers connected now",
+                        add.Select(g => $"{devices.Resolve(g).Name}: connected, but not in map {newest.Index + 1}")
+                            .Concat(remove.Select(g => $"{devices.Resolve(g).Name}: in map {newest.Index + 1}, but not connected"))
+                            .Append("RBR creates a new map with default bindings the next time it starts, unless a map is set to use " +
+                                    "these controllers (Use with these controllers)"));
+                }
+            }
+
+            if (_pluginDefs.Count > 0)
+            {
+                var bound = _pluginRows.Where(r => !r.IsUnbound).ToList();
+                Log.Info(LogArea.RbrControls, $"Read {RbrInstallation.RbrControlsIniFile}: {bound.Count} of {Plural(_pluginDefs.Count, "function")} bound");
+                var missing = bound.Where(r => r.State is LinkState.Missing or LinkState.Recent).ToList();
+                if (missing.Count > 0)
+                    Log.Warn(LogArea.RbrControls, $"{Plural(missing.Count, "bind")} use a controller that is not connected",
+                        missing.Select(r => $"{r.Page} · {r.Function}: {r.Device} · {r.Input}"));
+            }
+
+            if (_ffbRows.Count > 0)
+            {
+                if (_ffbStrength is null)
+                    Log.Warn(LogArea.ForceFeedback, $"Could not read the in-game strength from {_rbr.ProfileFile}");
+                else if (Math.Round(_ffbStrength.Value * 100) < 100)
+                    Log.Warn(LogArea.ForceFeedback, $"In-game strength is {Math.Round(_ffbStrength.Value * 100)}%",
+                        new[] { "Keep it at 100% and set the force in the wheelbase software: lower values clip detail" });
+                else
+                    Log.Info(LogArea.ForceFeedback, "In-game strength is 100%");
+
+                int overrides = _ffbRows.Count(r => r.Group.StartsWith("Per car", StringComparison.Ordinal));
+                Log.Info(LogArea.ForceFeedback, $"Read the force feedback settings from {RbrInstallation.GameIniFile} and the RSF launcher",
+                    _ffbRows.Where(r => !r.Group.StartsWith("Per car", StringComparison.Ordinal))
+                        .Select(r => $"{r.Group} · {r.Name}: {r.GameValue ?? "not set"}")
+                        .Append(overrides == 0 ? "No per-car overrides" : $"{Plural(overrides, "per-car override")}"));
+                var differ = _ffbRows.Where(r => r.Differs).ToList();
+                if (differ.Count > 0)
+                    Log.Warn(LogArea.ForceFeedback, $"The game and the RSF launcher have different values for {Plural(differ.Count, "setting")}",
+                        differ.Select(r => $"{r.Name}: game {r.GameValue}, launcher {r.LauncherValue} (the launcher writes its value when it starts the game)"));
+            }
+
+            var profiles = CurrentProfileBox.ItemsSource as IEnumerable<InputProfile> ?? Enumerable.Empty<InputProfile>();
+            string saved = $"Saved profiles: {(profiles.Any() ? string.Join(", ", profiles.Select(p => p.Name)) : "none")}";
+            if (CurrentProfileBox.SelectedItem is not InputProfile current)
+                Log.Info(LogArea.Profiles, "No current profile", new[] { saved });
+            else if (!_profileModified)
+                Log.Info(LogArea.Profiles, $"The game files match the current profile \"{current.Name}\"", new[] { saved });
+            else
+                Log.Warn(LogArea.Profiles, $"The game files differ from the current profile \"{current.Name}\" (profile → game)",
+                    ProfileStore.Differences(_rbr, current, g => devices.Resolve(g).Name, InputText, _ngpSecondaryGears)
+                        .Select(d => $"{d.Area} · {d.Item}: {OneLine(d.Profile)} → {OneLine(d.Game)}"));
+        }
+        catch (Exception ex)
+        {
+            Log.Error(LogArea.General, "Could not log what was read from the game files", ex);
+        }
+    }
+
+    // ---------------------------------------------------------------- status bar & log
+
+    /// <summary>Shows a message in the status bar and writes it to the log of its page.</summary>
+    private void Report(LogArea area, string message, IEnumerable<string>? details = null, LogLevel level = LogLevel.Info)
+    {
+        var lines = details?.ToList();
+        Log.Write(level, area, message, lines);
+        SetStatus(message, level, area, lines);
+    }
+
+    /// <summary>
+    /// Status bar only; <see cref="Report"/> also logs. <paramref name="area"/> is the log a click opens (null: every page),
+    /// <paramref name="details"/> show in the tooltip.
+    /// </summary>
+    private void SetStatus(string text, LogLevel level = LogLevel.Info, LogArea? area = null, IEnumerable<string>? details = null)
+    {
+        StatusText.Text = text;
+        _statusArea = area;
+        (SymbolRegular symbol, string brush) = level switch
+        {
+            LogLevel.Done => (SymbolRegular.CheckmarkCircle24, "SystemFillColorSuccessBrush"),
+            LogLevel.Warning => (SymbolRegular.Warning24, "SystemFillColorCautionBrush"),
+            LogLevel.Error => (SymbolRegular.ErrorCircle24, "SystemFillColorCriticalBrush"),
+            _ => (SymbolRegular.Info24, "TextFillColorSecondaryBrush"),
+        };
+        StatusIcon.Symbol = symbol;
+        StatusIcon.SetResourceReference(ForegroundProperty, brush);
+        var lines = details?.Select(d => $"· {d}").ToList() ?? new List<string>();
+        StatusHost.ToolTip = string.Join("\n", lines.Prepend(text).Append("").Append("Click to see the log."));
+    }
+
+    private void Status_Click(object sender, MouseButtonEventArgs e) => ShowLogsPage(_statusArea);
+
+    /// <summary>The pending binding edits as readable before/after text.</summary>
+    private List<ProfileDifference> PendingChanges()
+    {
+        if (_editor is null || _devices is null) return new();
+        var editor = _editor;
+        var devices = _devices;
+        return editor.Changes(
+            (map, action) => RbrActions.Get(action, RbrActions.HasSecondaryGears(editor.Maps[map], _ngpSecondaryGears)).Name,
+            g => devices.Resolve(g).Name, InputText,
+            key => _pluginDefs.FirstOrDefault(d => string.Equals(d.Key, key, StringComparison.OrdinalIgnoreCase)) is { } d
+                ? $"{d.Page} · {d.Function}" : key);
+    }
+
+    /// <summary>
+    /// Logs binding edits on the page they belong to (bindings and axis inversion on Game controls, binds on
+    /// RBR controls), each change as "before → after". <paramref name="message"/> gets the page's change count.
+    /// </summary>
+    private void LogChanges(LogLevel level, Func<int, string> message, List<ProfileDifference> changes, string? backup = null)
+    {
+        foreach (var page in changes.GroupBy(c => c.Area == "RBRControls" ? LogArea.RbrControls : LogArea.GameControls))
+        {
+            var lines = page.Select(c => $"{(c.Area == "Axis inversion" ? "Axis inversion · " : "")}{c.Item}: {OneLine(c.Profile)} → {OneLine(c.Game)}")
+                .ToList();
+            if (level == LogLevel.Done && _rbr is not null)
+            {
+                var files = page.Select(c => c.Area switch
+                {
+                    "Game controls" => _rbr.AcmFile,
+                    "Axis inversion" => RbrInstallation.InputIniFile,
+                    _ => RbrInstallation.RbrControlsIniFile,
+                }).Distinct();
+                lines.Add($"Wrote {string.Join(", ", files)}");
+                if (backup is not null) lines.Add($"Previous files backed up to {backup}");
+            }
+            Log.Write(level, page.Key, message(page.Count()), lines);
+        }
+    }
+
+    /// <summary>A value that lists several bindings (one per line) on one line.</summary>
+    private static string OneLine(string text) => text.Replace("\r", "").Replace("\n", " + ");
 
     private static string Plural(int n, string word) => $"{n} {word}{(n == 1 ? "" : "s")}";
 
@@ -382,11 +590,20 @@ public partial class MainWindow : FluentWindow
         if (!await Confirm($"Use map {map.Index + 1} with these controllers?", content, "Update map"))
             return;
 
-        await Run(async () =>
+        await Run(LogArea.GameControls, $"Using map {map.Index + 1} with the connected controllers", async () =>
         {
             var result = MapAdapter.Adapt(_rbr, _acm, map, _devices.AttachedGuids, g => _devices.Resolve(g).Name);
+            var details = new List<string>();
+            if (result.Added.Count > 0) details.Add("Added: " + string.Join(", ", result.Added.Select(g => _devices.Resolve(g).Name)));
+            if (result.Removed.Count > 0) details.Add("Removed: " + string.Join(", ", result.Removed.Select(g => _devices.Resolve(g).Name)));
+            details.Add($"Wrote {_rbr.AcmFile}");
+            details.Add($"Previous file backed up to {result.BackupPath}");
+            Log.Done(LogArea.GameControls, $"Map {map.Index + 1} now matches the connected controllers", details);
+            if (result.Dropped.Count > 0)
+                Log.Warn(LogArea.GameControls, $"{Plural(result.Dropped.Count, "binding")} removed from map {map.Index + 1}: their controller is not connected",
+                    result.Dropped);
             Reload();
-            SetStatus($"Map {map.Index + 1} now matches the connected controllers. Backup: {result.BackupPath}");
+            SetStatus($"Map {map.Index + 1} now matches the connected controllers. Backup: {result.BackupPath}", LogLevel.Done, LogArea.GameControls);
             if (result.Dropped.Count > 0)
                 await Info("Some bindings were removed",
                     "These used a controller that is not connected, so they were removed from the map:\n\n" +
@@ -428,14 +645,22 @@ public partial class MainWindow : FluentWindow
         if (!await Confirm($"Copy map {source.Index + 1} into map {target.Index + 1}?", content, "Copy bindings"))
             return;
 
-        await Run(async () =>
+        await Run(LogArea.GameControls, $"Copying map {source.Index + 1} into map {target.Index + 1}", async () =>
         {
             var result = MapCopier.Copy(_rbr, _acm, source, target, keep.IsChecked == true,
                 g => _devices.Resolve(g).VidPid, g => _devices.Resolve(g).Name);
+            var details = new List<string> { $"Copied {Plural(result.Copied, "binding")} from map {source.Index + 1}" };
+            if (result.Kept > 0) details.Add($"Kept {Plural(result.Kept, "binding")} of map {target.Index + 1} for actions map {source.Index + 1} leaves unbound");
+            details.Add($"Wrote {_rbr.AcmFile}");
+            details.Add($"Previous file backed up to {result.BackupPath}");
+            Log.Done(LogArea.GameControls, $"Copied map {source.Index + 1} into map {target.Index + 1}", details);
+            if (result.Skipped.Count > 0)
+                Log.Warn(LogArea.GameControls, $"{Plural(result.Skipped.Count, "binding")} not copied: their controller is not in map {target.Index + 1}",
+                    result.Skipped);
             Reload();
             string msg = $"Copied {Plural(result.Copied, "binding")} into map {target.Index + 1}" +
                          (result.Kept > 0 ? $", kept {result.Kept}" : "") + $". Backup: {result.BackupPath}";
-            SetStatus(msg);
+            SetStatus(msg, LogLevel.Done, LogArea.GameControls);
             if (result.Skipped.Count > 0)
                 await Info("Some bindings were not copied",
                     $"These use a device that is not in map {target.Index + 1} (not connected now), so RBR could not use them there:\n\n" +
@@ -493,11 +718,7 @@ public partial class MainWindow : FluentWindow
     private async void ShowEdits_Click(object sender, RoutedEventArgs e)
     {
         if (_editor is null || _devices is null || !_editor.IsDirty) return;
-        var changes = _editor.Changes(
-            (map, action) => RbrActions.Get(action, RbrActions.HasSecondaryGears(_editor.Maps[map], _ngpSecondaryGears)).Name,
-            g => _devices.Resolve(g).Name, InputText,
-            key => _pluginDefs.FirstOrDefault(d => string.Equals(d.Key, key, StringComparison.OrdinalIgnoreCase)) is { } d
-                ? $"{d.Page} · {d.Function}" : key);
+        var changes = PendingChanges();
 
         var box = new MessageBox
         {
@@ -534,10 +755,13 @@ public partial class MainWindow : FluentWindow
             InputKind.Button => "Press a button or key",
             _ => "Move an axis or press a button / key",
         };
-        StartCapture(add ? $"Add a binding for {action.Name}" : $"Bind {action.Name}", what, action.Accepts, async input =>
+        StartCapture(LogArea.GameControls, add ? $"Add a binding for {action.Name}" : $"Bind {action.Name}", what, action.Accepts, async input =>
         {
             var conflicts = _editor.Conflicts(map, input, action.Id);
             var removeFrom = new List<int>();
+            var details = new List<string>();
+            if (_editor.Maps.Count > 1) details.Add($"Map {map + 1}");
+            if (!add && !row.IsUnbound) details.Add($"Replaces {row.Device} · {row.Input}");
             if (conflicts.Count > 0)
             {
                 string names = string.Join(", ", conflicts.Select(c => RbrActions.Get(c, secondaryGears).Name));
@@ -545,10 +769,13 @@ public partial class MainWindow : FluentWindow
                     "Move it here", "Use it for both");
                 if (choice == MessageBoxResult.None) return;
                 if (choice == MessageBoxResult.Primary) removeFrom = conflicts;
+                details.Add(choice == MessageBoxResult.Primary ? $"Moved from {names}" : $"Still bound to {names} as well");
             }
             _editor.Bind(map, action.Id, input, add ? null : row.BindingIndex, removeFrom);
             RefreshEdits();
-            SetStatus($"{action.Name} → {input.DeviceName} · {input.Label} (not saved yet)");
+            Report(LogArea.GameControls, add
+                ? $"{action.Name}: added {input.DeviceName} · {input.Label} (not saved yet)"
+                : $"{action.Name} → {input.DeviceName} · {input.Label} (not saved yet)", details);
         });
     }
 
@@ -557,7 +784,7 @@ public partial class MainWindow : FluentWindow
         if (RowOf<GameBindingRow>(sender) is not { BindingIndex: int index } row || _editor is null || ShownMapIndex is not int map) return;
         _editor.Unbind(map, index);
         RefreshEdits();
-        SetStatus($"{row.Action}: binding removed (not saved yet)");
+        Report(LogArea.GameControls, $"{row.Action}: binding removed (not saved yet)", new[] { $"Was {row.Device} · {row.Input}" });
     }
 
     private void InvertAction_Click(object sender, RoutedEventArgs e)
@@ -568,16 +795,19 @@ public partial class MainWindow : FluentWindow
         bool inverted = !_editor.IsInverted(action.InvertKey);
         _editor.SetInverted(action.InvertKey, inverted);
         RefreshEdits();
-        SetStatus($"{action.Name}: axis {(inverted ? "inverted" : "not inverted")} (not saved yet)");
+        Report(LogArea.GameControls, $"{action.Name}: axis {(inverted ? "inverted" : "not inverted")} (not saved yet)",
+            new[] { $"input.ini {action.InvertKey}, used by every map" });
     }
 
     private void BindPlugin_Click(object sender, RoutedEventArgs e)
     {
         if (RowOf<PluginBindingRow>(sender) is not { } row || _editor is null) return;
-        StartCapture($"Bind {row.Function}", "Press a button or key", InputKind.Button, async input =>
+        StartCapture(LogArea.RbrControls, $"Bind {row.Function}", "Press a button or key", InputKind.Button, async input =>
         {
             string value = BindingEditor.PluginBindValue(input);
             var conflicts = _editor.PluginConflicts(value, row.Key);
+            var details = new List<string> { $"{row.Page} · {row.Key} = {value}" };
+            if (!row.IsUnbound) details.Add($"Replaces {row.Device} · {row.Input}");
             if (conflicts.Count > 0)
             {
                 string names = string.Join(", ", conflicts.Select(k => _pluginDefs.FirstOrDefault(d => d.Key == k)?.Function ?? k));
@@ -586,10 +816,11 @@ public partial class MainWindow : FluentWindow
                 if (choice == MessageBoxResult.None) return;
                 if (choice == MessageBoxResult.Primary)
                     foreach (var k in conflicts) _editor.SetPlugin(k, "");
+                details.Add(choice == MessageBoxResult.Primary ? $"Moved from {names}" : $"Still bound to {names} as well");
             }
             _editor.SetPlugin(row.Key, value);
             RefreshEdits(game: false, plugin: true);
-            SetStatus($"{row.Function} → {input.DeviceName} · {input.Label} (not saved yet)");
+            Report(LogArea.RbrControls, $"{row.Function} → {input.DeviceName} · {input.Label} (not saved yet)", details);
         });
     }
 
@@ -598,26 +829,36 @@ public partial class MainWindow : FluentWindow
         if (RowOf<PluginBindingRow>(sender) is not { } row || _editor is null) return;
         _editor.SetPlugin(row.Key, "");
         RefreshEdits(game: false, plugin: true);
+        Report(LogArea.RbrControls, $"{row.Function}: bind removed (not saved yet)", new[] { $"Was {row.Device} · {row.Input}" });
     }
 
     private async void SaveEdits_Click(object sender, RoutedEventArgs e)
     {
         if (_rbr is null || _editor is null || !_editor.IsDirty) return;
         if (!await EnsureGameClosed()) return;
-        await Run(() =>
+        var changes = PendingChanges();
+        var area = EditArea(changes);
+        await Run(area, "Saving the changes to the game", () =>
         {
             int n = _editor.ChangeCount;
             string? backup = _editor.Save(_rbr);
+            LogChanges(LogLevel.Done, count => $"Saved {Plural(count, "change")} to the game", changes, backup);
             Reload();
-            SetStatus($"Saved {Plural(n, "change")} to the game." + (backup is null ? "" : $" Backup: {backup}"));
+            SetStatus($"Saved {Plural(n, "change")} to the game." + (backup is null ? "" : $" Backup: {backup}"), LogLevel.Done, area);
         });
     }
 
     private void DiscardEdits_Click(object sender, RoutedEventArgs e)
     {
+        var changes = PendingChanges();
+        LogChanges(LogLevel.Info, n => $"Discarded {Plural(n, "unsaved change")}", changes);
         Reload();
-        SetStatus("Unsaved changes discarded.");
+        SetStatus("Unsaved changes discarded.", LogLevel.Info, EditArea(changes));
     }
+
+    /// <summary>The page whose log holds a set of edits: RBR controls when they are all binds, else Game controls.</summary>
+    private static LogArea EditArea(List<ProfileDifference> changes) =>
+        changes.Count > 0 && changes.All(c => c.Area == "RBRControls") ? LogArea.RbrControls : LogArea.GameControls;
 
     /// <summary>Asks before an action that reloads or rewrites the game files while edits are pending.</summary>
     private async Task<bool> ConfirmDiscardEdits()
@@ -631,7 +872,8 @@ public partial class MainWindow : FluentWindow
 
     private Func<CapturedInput, Task>? _onCaptured;
 
-    private void StartCapture(string title, string hint, InputKind accept, Func<CapturedInput, Task> onCaptured)
+    /// <param name="area">Page whose log records a failure.</param>
+    private void StartCapture(LogArea area, string title, string hint, InputKind accept, Func<CapturedInput, Task> onCaptured)
     {
         StopCapture();
         try
@@ -641,7 +883,8 @@ public partial class MainWindow : FluentWindow
         }
         catch (Exception ex)
         {
-            SetStatus($"Can't read input devices: {ex.Message}");
+            Log.Error(area, "Can't read input devices", ex);
+            SetStatus($"Can't read input devices: {ex.Message}", LogLevel.Error, area);
             return;
         }
         _onCaptured = onCaptured;
@@ -655,7 +898,7 @@ public partial class MainWindow : FluentWindow
         {
             var handler = _onCaptured;
             StopCapture();
-            if (handler is not null) await Run(() => handler(input));
+            if (handler is not null) await Run(area, $"Binding {input.DeviceName} · {input.Label}", () => handler(input));
         };
         _capture.Start(accept);
     }
@@ -744,7 +987,12 @@ public partial class MainWindow : FluentWindow
             _monitor.Captured += LocateInput;
             _monitor.StartMonitor();
         }
-        catch { _monitor = null; /* no DirectInput: the locator just stays off */ }
+        catch (Exception ex)
+        {
+            // No DirectInput: the locator and the live display just stay off.
+            _monitor = null;
+            Log.WarnOnce("monitor", LogArea.GameControls, "Can't read the controllers: the live input display and find-by-pressing are off", ex);
+        }
         UpdateMonitorPause();
     }
 
@@ -874,18 +1122,25 @@ public partial class MainWindow : FluentWindow
 
     private void LoadFfb()
     {
+        _ffbRows = new();
         var rows = FfbSettings.Load(_rbr!);
         rows.AddRange(FfbSettings.LoadPerCar(_rbr!));
         var view = new ListCollectionView(rows);
         view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(SettingRow.Group)));
         FfbGrid.ItemsSource = view;
+        _ffbRows = rows;
 
         float? strength = null;
         try
         {
             if (File.Exists(_rbr!.ProfileRbr)) strength = RbrProfileFile.Load(_rbr.ProfileRbr).ForceFeedbackStrength;
         }
-        catch { /* shown as unknown below */ }
+        catch (Exception ex)
+        {
+            // Shown as unknown.
+            Log.Error(LogArea.ForceFeedback, $"Could not read the in-game strength from {_rbr!.ProfileFile}", ex);
+        }
+        _ffbStrength = strength;
         ShowStrength(strength);
     }
 
@@ -922,11 +1177,18 @@ public partial class MainWindow : FluentWindow
     private async void StrengthFull_Click(object sender, RoutedEventArgs e)
     {
         if (_rbr is null || !await EnsureGameClosed()) return;
-        await Run(() =>
+        await Run(LogArea.ForceFeedback, "Setting the in-game strength to 100%", () =>
         {
+            string before = _ffbStrength is { } s ? $"{Math.Round(s * 100)}%" : "unknown";
             RbrProfileFile.SetForceFeedbackStrength(_rbr.ProfileRbr, 1f);
             LoadFfb();
-            SetStatus($"In-game strength set to 100%. The profile as it was is kept in {RbrProfileFile.BackupPath(_rbr.ProfileRbr)}");
+            string backup = RbrProfileFile.BackupPath(_rbr.ProfileRbr);
+            Log.Done(LogArea.ForceFeedback, $"In-game strength set to 100% (was {before})", new[]
+            {
+                $"Wrote {_rbr.ProfileFile} and checked that RBR can read it back",
+                $"The profile as it was before the first change here is kept in {backup}",
+            });
+            SetStatus($"In-game strength set to 100%. The profile as it was is kept in {backup}", LogLevel.Done, LogArea.ForceFeedback);
         });
     }
 
@@ -1007,7 +1269,15 @@ public partial class MainWindow : FluentWindow
         if (current is null && _rbr is not null)
         {
             // Nothing recorded (or it was deleted): adopt a profile the game already matches exactly. Read-only.
-            current = profiles.FirstOrDefault(p => { try { return ProfileStore.MatchesGame(_rbr, p); } catch { return false; } });
+            current = profiles.FirstOrDefault(p =>
+            {
+                try { return ProfileStore.MatchesGame(_rbr, p); }
+                catch (Exception ex)
+                {
+                    Log.WarnOnce($"match:{p.Name}", LogArea.Profiles, $"Could not compare the profile \"{p.Name}\" with the game files", ex);
+                    return false;
+                }
+            });
             if (current is not null) SetCurrentProfile(current.Name);
         }
 
@@ -1027,7 +1297,11 @@ public partial class MainWindow : FluentWindow
 
         bool modified = false;
         try { modified = current is not null && _rbr is not null && !ProfileStore.MatchesGame(_rbr, current); }
-        catch { /* unreadable files: don't claim anything */ }
+        catch (Exception ex)
+        {
+            // Unreadable files: don't claim anything.
+            Log.WarnOnce($"match:{current!.Name}", LogArea.Profiles, $"Could not compare the profile \"{current.Name}\" with the game files", ex);
+        }
         ProfileStateHost.Visibility = current is null ? Visibility.Collapsed : Visibility.Visible;
         ProfileStateIcon.Symbol = modified ? SymbolRegular.Warning24 : SymbolRegular.CheckmarkCircle24;
         ProfileStateIcon.SetResourceReference(ForegroundProperty,
@@ -1057,6 +1331,10 @@ public partial class MainWindow : FluentWindow
         // Picking a profile only selects it; the state icon shows whether the game differs and "Apply" writes it.
         SetCurrentProfile(p.Name);
         RefreshCurrentProfile();
+        Report(LogArea.Profiles, $"Current profile: \"{p.Name}\"", new[]
+        {
+            _profileModified ? "The game files differ from it: Apply writes it to the game" : "The game files match it",
+        });
     }
 
     private async void ApplyCurrentProfile_Click(object sender, RoutedEventArgs e)
@@ -1067,11 +1345,7 @@ public partial class MainWindow : FluentWindow
                 $"Apply \"{p.Name}\" to the game? Its bindings, axis inversion, RBRControls binds and force feedback values " +
                 "replace the current ones (backed up first).", "Apply"))
             return;
-        await Run(() =>
-        {
-            ApplyProfile(p);
-            SetStatus($"Profile \"{p.Name}\" applied to the game.");
-        });
+        await Run(LogArea.Profiles, $"Applying the profile \"{p.Name}\"", () => ApplyProfile(p));
     }
 
     /// <summary>The caution icon: lists what the game files hold differently from the current profile.</summary>
@@ -1086,6 +1360,7 @@ public partial class MainWindow : FluentWindow
         }
         catch (Exception ex)
         {
+            Log.Error(LogArea.Profiles, $"Could not compare the profile \"{p.Name}\" with the game files", ex);
             await Info("Could not compare", ex.Message);
             return;
         }
@@ -1109,24 +1384,31 @@ public partial class MainWindow : FluentWindow
         if (choice == MessageBoxResult.Primary)
         {
             if (!await ConfirmDiscardEdits() || !await EnsureGameClosed()) return;
-            await Run(() =>
-            {
-                ApplyProfile(p);
-                SetStatus($"Profile \"{p.Name}\" applied to the game.");
-            });
+            await Run(LogArea.Profiles, $"Applying the profile \"{p.Name}\"", () => ApplyProfile(p));
         }
         else if (choice == MessageBoxResult.Secondary)
         {
             if (!await Confirm("Overwrite profile?", $"Replace \"{p.Name}\" with the setup currently in the game?", "Overwrite"))
                 return;
-            await Run(() =>
+            await Run(LogArea.Profiles, $"Updating the profile \"{p.Name}\"", () =>
             {
-                ProfileStore.SaveCurrent(_rbr, p.Name, _devices);
+                var saved = ProfileStore.SaveCurrent(_rbr, p.Name, _devices);
                 LoadProfiles();
-                SetStatus($"Profile \"{p.Name}\" updated.");
+                Report(LogArea.Profiles, $"Profile \"{p.Name}\" updated with the setup in the game",
+                    diffs.Select(d => $"{d.Area} · {d.Item}: {OneLine(d.Profile)} → {OneLine(d.Game)}").Concat(ProfileDetails(saved)),
+                    LogLevel.Done);
             });
         }
     }
+
+    /// <summary>What a profile holds and where, for the log.</summary>
+    private static IEnumerable<string> ProfileDetails(InputProfile p) => new[]
+    {
+        $"{Plural(p.BindingCount, "binding")} in the map RBR uses with the controllers connected now · " +
+        (p.Devices.Count == 0 ? "no devices" : string.Join(", ", p.Devices)),
+        $"{Plural(p.Ffb.Count, "force feedback value")}, axis inversion and RBRControls binds",
+        $"Stored in {p.Dir}",
+    };
 
     /// <summary>Differences grouped by area, as a three-column table: what changed, then the two values side by side.</summary>
     private static UIElement DifferencesView(string intro, string leftHeader, string rightHeader, List<ProfileDifference> diffs)
@@ -1186,19 +1468,25 @@ public partial class MainWindow : FluentWindow
     /// <summary>Backs up the files a profile overwrites, applies it and makes it the current profile.</summary>
     private void ApplyProfile(InputProfile p)
     {
+        string? backup = null;
         foreach (var rel in new[] { _rbr!.AcmFile, RbrInstallation.InputIniFile, RbrInstallation.RbrControlsIniFile,
                                     RbrInstallation.GameIniFile, RbrInstallation.LauncherIniFile })
-            if (File.Exists(_rbr!.Path(rel))) GameFiles.Backup(_rbr, rel);
-        ProfileStore.Apply(_rbr!, p);
+            if (File.Exists(_rbr!.Path(rel))) backup = GameFiles.Backup(_rbr, rel);
+        var written = ProfileStore.Apply(_rbr!, p);
         SetCurrentProfile(p.Name);
+        var details = new List<string> { $"Wrote {string.Join(", ", written)}" };
+        if (p.Ffb.Count > 0) details.Add($"Force feedback: {Plural(p.Ffb.Count, "value")} from the profile");
+        if (backup is not null) details.Add($"Previous files backed up to {GameFiles.BackupFolder(backup)}");
+        Log.Done(LogArea.Profiles, $"Profile \"{p.Name}\" applied to the game", details);
         Reload();
+        SetStatus($"Profile \"{p.Name}\" applied to the game.", LogLevel.Done, LogArea.Profiles, details);
     }
 
     /// <summary>Shows the page for the selected tab; pages are never rebuilt, only shown or hidden.</summary>
     private void Tabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (e.OriginalSource != Tabs || Pages is null) return;
-        var pages = new UIElement[] { InfoPage, GamePage, PluginPagePanel, FfbPage, ProfilesPagePanel, SettingsPagePanel };
+        var pages = new UIElement[] { InfoPage, GamePage, PluginPagePanel, FfbPage, LogsPage, ProfilesPagePanel, SettingsPagePanel };
         for (int i = 0; i < pages.Length; i++)
             pages[i].Visibility = i == Tabs.SelectedIndex ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1207,6 +1495,7 @@ public partial class MainWindow : FluentWindow
         SettingsIcon.Symbol = inSettings ? SymbolRegular.ArrowLeft24 : SymbolRegular.Settings24;
         SettingsButton.ToolTip = inSettings ? "Back" : "Settings";
         if (!inSettings) _pageBeforeSettings = Tabs.SelectedIndex;
+        if (Tabs.SelectedItem == LogsTab) OnLogsTabShown();
     }
 
     private void OpenProfiles_Click(object sender, RoutedEventArgs e) => Tabs.SelectedItem = ProfilesPage;
@@ -1266,17 +1555,19 @@ public partial class MainWindow : FluentWindow
             await Info("Profile name", $"\"{ProfileStore.DefaultName}\" is the original game setup and can't be overwritten. Pick another name.");
             return;
         }
-        if (ProfileStore.Exists(name) &&
+        bool exists = ProfileStore.Exists(name);
+        if (exists &&
             !await Confirm("Overwrite profile?", $"A profile called \"{name}\" already exists. Replace it with the current setup?", "Overwrite"))
             return;
 
-        await Run(() =>
+        await Run(LogArea.Profiles, $"Saving the profile \"{name}\"", () =>
         {
-            ProfileStore.SaveCurrent(_rbr, name, _devices);
+            var saved = ProfileStore.SaveCurrent(_rbr, name, _devices);
             SetCurrentProfile(name);
             ProfileNameBox.Text = "";
             LoadProfiles();
-            SetStatus($"Profile \"{name}\" saved.");
+            Report(LogArea.Profiles, exists ? $"Profile \"{name}\" saved, replacing the previous one" : $"Profile \"{name}\" saved",
+                ProfileDetails(saved), LogLevel.Done);
         });
     }
 
@@ -1285,12 +1576,25 @@ public partial class MainWindow : FluentWindow
         if (_rbr is null || _devices is null || SelectedProfile is not { } p) return;
         if (!await Confirm("Overwrite profile?", $"Replace \"{p.Name}\" with the setup currently in the game?", "Overwrite"))
             return;
-        await Run(() =>
+        await Run(LogArea.Profiles, $"Updating the profile \"{p.Name}\"", () =>
         {
-            ProfileStore.SaveCurrent(_rbr, p.Name, _devices);
+            // What the update changes in the profile (old → new); not knowing it doesn't stop the update.
+            var changes = new List<string>();
+            try
+            {
+                changes = ProfileStore.Differences(_rbr, p, g => _devices.Resolve(g).Name, InputText, _ngpSecondaryGears)
+                    .Select(d => $"{d.Area} · {d.Item}: {OneLine(d.Profile)} → {OneLine(d.Game)}").ToList();
+            }
+            catch (Exception ex)
+            {
+                // Only the log's list of changes is lost; the update goes ahead.
+                Log.Warn(LogArea.Profiles, $"Could not compare the profile \"{p.Name}\" with the game files before updating it", new[] { ex.Message });
+            }
+            var saved = ProfileStore.SaveCurrent(_rbr, p.Name, _devices);
             SetCurrentProfile(p.Name);
             LoadProfiles();
-            SetStatus($"Profile \"{p.Name}\" updated.");
+            Report(LogArea.Profiles, $"Profile \"{p.Name}\" updated with the setup in the game",
+                changes.Concat(ProfileDetails(saved)), LogLevel.Done);
         });
     }
 
@@ -1304,11 +1608,7 @@ public partial class MainWindow : FluentWindow
                 "Apply"))
             return;
 
-        await Run(() =>
-        {
-            ApplyProfile(p);
-            SetStatus($"Profile \"{p.Name}\" applied to the game.");
-        });
+        await Run(LogArea.Profiles, $"Applying the profile \"{p.Name}\"", () => ApplyProfile(p));
     }
 
     private async void DeleteProfile_Click(object sender, RoutedEventArgs e)
@@ -1316,12 +1616,13 @@ public partial class MainWindow : FluentWindow
         if (SelectedProfile is not { } p) return;
         if (!await Confirm("Delete profile?", $"Delete \"{p.Name}\"? The game files are not touched.", "Delete"))
             return;
-        await Run(() =>
+        await Run(LogArea.Profiles, $"Deleting the profile \"{p.Name}\"", () =>
         {
             ProfileStore.Delete(p);
             if (string.Equals(p.Name, _settings.CurrentProfile, StringComparison.CurrentCultureIgnoreCase)) SetCurrentProfile(null);
             LoadProfiles();
-            SetStatus($"Profile \"{p.Name}\" deleted.");
+            Report(LogArea.Profiles, $"Profile \"{p.Name}\" deleted", new[] { $"Removed {p.Dir}", "The game files were not touched" },
+                LogLevel.Done);
         });
     }
 
@@ -1348,12 +1649,16 @@ public partial class MainWindow : FluentWindow
                 "Restore"))
             return;
 
-        await Run(async () =>
+        await Run(LogArea.Settings, "Restoring the original game files", async () =>
         {
             var result = OriginalBackup.Restore(_rbr);
-            Reload();
             string msg = $"{result.Restored} file(s) restored, {result.Unchanged} already original.";
-            SetStatus(msg);
+            var files = OriginalBackup.Load(_rbr.Root)?.Files.Where(f => f.Existed).Select(f => f.RelativePath) ?? Enumerable.Empty<string>();
+            Log.Write(result.Warnings.Count > 0 ? LogLevel.Warning : LogLevel.Done, LogArea.Settings,
+                $"Restored the original game files: {result.Restored} restored, {result.Unchanged} already original",
+                result.Warnings.Prepend($"Files in the backup: {string.Join(", ", files)}"));
+            Reload();
+            SetStatus(msg, result.Warnings.Count > 0 ? LogLevel.Warning : LogLevel.Done, LogArea.Settings, result.Warnings);
             if (result.Warnings.Count > 0)
                 await Info("Restore finished with warnings", msg + "\n\n" + string.Join("\n", result.Warnings));
         });
@@ -1408,16 +1713,20 @@ public partial class MainWindow : FluentWindow
             if (_update is null)
             {
                 SetUpdateState(UpdateState.UpToDate);
+                Log.Info(LogArea.Settings, $"Up to date: {UpdateService.CurrentVersion.ToString(3)} is the latest release");
                 if (userInitiated) await Info("Updates", $"You have the latest version ({UpdateService.CurrentVersion.ToString(3)}).");
                 return;
             }
             SetUpdateState(UpdateState.Available);
+            Log.Info(LogArea.Settings, $"Update available: {_update.Version.ToString(3)} (you have {UpdateService.CurrentVersion.ToString(3)})",
+                new[] { _update.PageUrl });
             UpdateText.Text = $"RBR Input Manager {_update.Version.ToString(3)} is available (you have {UpdateService.CurrentVersion.ToString(3)}).";
             UpdateBanner.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
         {
             SetUpdateState(UpdateState.Failed);
+            Log.Warn(LogArea.Settings, "Could not check GitHub for updates", new[] { ex.Message });
             if (userInitiated) await Info("Updates", $"Could not check for updates: {ex.Message}");
         }
         finally
@@ -1436,12 +1745,15 @@ public partial class MainWindow : FluentWindow
         InstallUpdateButton.IsEnabled = false;
         try
         {
+            Log.Info(LogArea.Settings, $"Downloading the update {_update.Version.ToString(3)}", new[] { _update.DownloadUrl });
             var progress = new Progress<double>(p => UpdateText.Text = $"Downloading {_update.Version.ToString(3)}… {p:P0}");
             await UpdateService.InstallAsync(_update, progress);
+            Log.Done(LogArea.Settings, $"Update {_update.Version.ToString(3)} installed, restarting");
             Application.Current.Shutdown();
         }
         catch (Exception ex)
         {
+            Log.Error(LogArea.Settings, $"Could not install the update {_update.Version.ToString(3)}", ex);
             InstallUpdateButton.IsEnabled = true;
             UpdateText.Text = $"Update failed: {ex.Message}";
         }
@@ -1502,10 +1814,11 @@ public partial class MainWindow : FluentWindow
         if (dlg.ShowDialog(this) != true) return;
         if (!RbrInstallation.IsValid(dlg.FolderName))
         {
+            Log.Warn(LogArea.Settings, $"Not an RBR install folder: {dlg.FolderName}", new[] { "It does not contain RichardBurnsRally.ini" });
             await Info("RBR install folder", "That folder does not contain RichardBurnsRally.ini.");
             return;
         }
-        Open(dlg.FolderName);
+        Open(dlg.FolderName, "picked in Settings");
     }
 
     private async void RbrProfile_Changed(object sender, SelectionChangedEventArgs e)
@@ -1519,7 +1832,7 @@ public partial class MainWindow : FluentWindow
             return;
         }
         _settings.RbrProfile = profile;
-        Open(_rbr.Root);
+        Open(_rbr.Root, $"RBR profile changed to {profile} in Settings");
     }
 
     private async void Reload_Click(object sender, RoutedEventArgs e)
@@ -1567,6 +1880,8 @@ public partial class MainWindow : FluentWindow
     {
         var running = RbrInstallation.RunningGameProcesses();
         if (running.Count == 0) return true;
+        Log.Warn(LogArea.General, "Game files left unchanged: the game or the RSF launcher is running",
+            new[] { $"Running: {string.Join(", ", running)}" });
         await Info("Close the game first",
             $"These are running: {string.Join(", ", running)}.\n\nClose RBR and the RSF launcher before changing game files, " +
             "otherwise they may overwrite the changes when they exit.");
@@ -1595,15 +1910,25 @@ public partial class MainWindow : FluentWindow
         await box.ShowDialogAsync();
     }
 
-    private async Task Run(Action action) => await Run(() => { action(); return Task.CompletedTask; });
+    private async Task Run(LogArea area, string what, Action action) =>
+        await Run(area, what, () => { action(); return Task.CompletedTask; });
 
-    private async Task Run(Func<Task> action)
+    /// <summary>Runs an action; a failure is logged on <paramref name="area"/> as "<paramref name="what"/> failed" and shown.</summary>
+    private async Task Run(LogArea area, string what, Func<Task> action)
     {
+        // Files written while the action runs are logged on its page.
+        var outer = Log.Context;
+        Log.Context = area;
         try { await action(); }
         catch (Exception ex)
         {
-            SetStatus(ex.Message);
+            Log.Error(area, $"{what} failed", ex);
+            SetStatus(ex.Message, LogLevel.Error, area);
             await Info("Something went wrong", ex.Message);
+        }
+        finally
+        {
+            Log.Context = outer;
         }
     }
 }

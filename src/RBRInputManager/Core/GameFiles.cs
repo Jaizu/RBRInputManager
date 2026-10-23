@@ -22,14 +22,20 @@ public static class GameFiles
         Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
         File.Copy(rbr.Path(relativePath), dst, overwrite: true);
         File.SetAttributes(dst, FileAttributes.Normal);
+        Log.Info(Log.Context, $"Backed up {relativePath}", new[] { $"Copy: {dst}" });
         return dst;
     }
+
+    /// <summary>The Backups\&lt;timestamp&gt; folder holding a path returned by <see cref="Backup"/>.</summary>
+    public static string BackupFolder(string backupPath) =>
+        Path.Combine(BackupsDir, Path.GetRelativePath(BackupsDir, backupPath).Split(Path.DirectorySeparatorChar)[0]);
 
     /// <summary>
     /// Overwrites the contents in place (truncate + write) so the existing file keeps its ACL,
     /// owner and creation time. A read-only attribute is lifted for the write and put back.
     /// </summary>
-    public static void WriteInPlace(string path, byte[] content)
+    /// <param name="details">What changed, for the log (e.g. the INI values set).</param>
+    public static void WriteInPlace(string path, byte[] content, IEnumerable<string>? details = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var attrs = File.Exists(path) ? File.GetAttributes(path) : (FileAttributes?)null;
@@ -45,6 +51,7 @@ public static class GameFiles
         {
             if (attrs is { } orig) File.SetAttributes(path, orig);
         }
+        Log.Info(Log.Context, $"Wrote {path} ({content.Length:N0} bytes)", details);
     }
 
     /// <summary>
@@ -60,6 +67,7 @@ public static class GameFiles
         bool trailingNewline = lines.Count > 0 && lines[^1].Length == 0;
         if (trailingNewline) lines.RemoveAt(lines.Count - 1);
 
+        var set = new List<string>();
         foreach (var (section, key, value) in values)
         {
             int start = -1, end = lines.Count, lastKey = -1;
@@ -87,7 +95,9 @@ public static class GameFiles
                     done = true;
                 }
             }
+            if (done) set.Add($"[{section}] {key} = {value}");
             if (done || onlyExistingKeys) continue;
+            set.Add($"[{section}] {key} = {value} (added)");
 
             if (start < 0)
             {
@@ -102,6 +112,6 @@ public static class GameFiles
         }
 
         string result = string.Join(nl, lines) + (trailingNewline ? nl : "");
-        WriteInPlace(path, Ansi.GetBytes(result));
+        WriteInPlace(path, Ansi.GetBytes(result), set);
     }
 }

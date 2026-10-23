@@ -80,6 +80,7 @@ public static class UpdateService
             }
         }
 
+        Log.Info(LogArea.Settings, $"Downloaded {update.Tag} to {newFile}");
         if (File.Exists(oldFile)) File.Delete(oldFile);
         File.Move(exe, oldFile);
         try
@@ -89,8 +90,10 @@ public static class UpdateService
         catch
         {
             File.Move(oldFile, exe); // put the working version back
+            Log.Warn(LogArea.Settings, "Could not put the new version in place; the current one was put back");
             throw;
         }
+        Log.Info(LogArea.Settings, $"Replaced {exe} (the previous version is {oldFile} until the next start)");
         Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
     }
 
@@ -109,7 +112,10 @@ public static class UpdateService
                 }
             }
         }
-        catch { /* not critical */ }
+        catch (Exception ex)
+        {
+            Log.Warn(LogArea.Settings, "Could not remove the previous version left by an update", new[] { ex.Message });
+        }
     }
 
     private static Version? ParseVersion(string? s)
