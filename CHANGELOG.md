@@ -2,7 +2,7 @@
 
 All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-10-23
 
 ### Added
 - **Rename the RBR profile** (Settings → RBR profile → Rename…): stores the new name inside `pf<NAME>.rbr` and
@@ -133,6 +133,7 @@ First release.
 - Self-updater from GitHub releases.
 - Light and dark theme.
 
+[0.5.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.1.0...v0.2.0
