@@ -113,23 +113,19 @@ public sealed class RbrInstallation
     public IReadOnlyList<string> RenameProfile(string newName)
     {
         if (ProfileNameProblem(newName) is { } problem) throw new ArgumentException(problem);
-        string dir = Path("SavedGames");
+        string dir = Path(SavedGamesDir);
         string oldRbr = ProfileRbr;
         if (!File.Exists(oldRbr)) throw new FileNotFoundException($"{ProfileFile} does not exist.");
         if (newName == Profile && RbrProfileFile.Load(oldRbr).Name == newName) return Array.Empty<string>();
 
-        // The same name only rewrites the stored one (files renamed by hand). Season saves are "<n>slot<m>_<NAME>.lsp".
+        // The same name only rewrites the stored one (files renamed by hand). Every file name ends in <NAME>.<ext>.
         var moves = new List<(string From, string To)>();
         if (newName != Profile)
-        {
-            moves.Add((oldRbr, System.IO.Path.Combine(dir, $"pf{newName}.rbr")));
-            if (File.Exists(Acm)) moves.Add((Acm, System.IO.Path.Combine(dir, $"pf{newName}.acm")));
-            foreach (var lsp in Directory.GetFiles(dir, $"*slot*_{Profile}.lsp"))
+            foreach (var f in ProfileFiles())
             {
-                string file = System.IO.Path.GetFileName(lsp);
-                moves.Add((lsp, System.IO.Path.Combine(dir, file[..^(Profile.Length + 4)] + newName + ".lsp")));
+                string file = System.IO.Path.GetFileName(f), ext = System.IO.Path.GetExtension(f);
+                moves.Add((f, System.IO.Path.Combine(dir, file[..^(Profile.Length + ext.Length)] + newName + ext)));
             }
-        }
 
         byte[] originalRbr = File.ReadAllBytes(oldRbr);
         var done = new List<(string From, string To)>();
@@ -141,17 +137,74 @@ public sealed class RbrInstallation
                 // A case-only change (MyName → MYNAME) is the same file to Windows; File.Move handles it.
                 File.Move(m.From, m.To);
                 done.Add(m);
+                Log.Info(Log.Context, $"Renamed {m.From} to {System.IO.Path.GetFileName(m.To)}");
             }
         }
-        catch
+        catch (Exception ex)
         {
-            foreach (var m in Enumerable.Reverse(done)) File.Move(m.To, m.From);
-            GameFiles.WriteInPlace(oldRbr, originalRbr);
+            Undo(done, $"Renaming the profile {Profile} to {newName} failed ({ex.Message}); put everything back");
+            GameFiles.WriteInPlace(oldRbr, originalRbr, new[] { $"Stored profile name put back to {Profile}" });
             throw;
         }
         if (moves.Count == 0) return new[] { $"Stored name in {ProfileFile} set to {newName}" };
         OriginalBackup.RenameFile(Root, AcmFile, $@"SavedGames\pf{newName}.acm");
         return moves.Select(m => $"{System.IO.Path.GetFileName(m.From)} → {System.IO.Path.GetFileName(m.To)}").ToList();
+    }
+
+    private const string SavedGamesDir = "SavedGames";
+
+    /// <summary>Moves files back after a failed rename or delete, logging each one (and any that can't be).</summary>
+    private static void Undo(List<(string From, string To)> done, string why)
+    {
+        var lines = new List<string>();
+        foreach (var m in Enumerable.Reverse(done))
+        {
+            try { File.Move(m.To, m.From); lines.Add($"{m.To} → {m.From}"); }
+            catch (Exception ex) { lines.Add($"Could not move {m.To} back to {m.From}: {ex.Message}"); }
+        }
+        Log.Warn(Log.Context, why, lines.Count > 0 ? lines : new List<string> { "No file had been moved yet" });
+    }
+
+    /// <summary>The files of <see cref="Profile"/> that exist: pf&lt;NAME&gt;.rbr, .acm and season saves (&lt;n&gt;slot&lt;m&gt;_&lt;NAME&gt;.lsp).</summary>
+    private List<string> ProfileFiles()
+    {
+        string dir = Path(SavedGamesDir);
+        var files = new[] { ProfileRbr, Acm }.Where(File.Exists).ToList();
+        if (Directory.Exists(dir)) files.AddRange(Directory.GetFiles(dir, $"*slot*_{Profile}.lsp"));
+        return files;
+    }
+
+    /// <summary>
+    /// Removes <see cref="Profile"/> from the game: its files are moved (not deleted) to
+    /// %AppData%\RBRInputManager\DeletedProfiles\&lt;NAME&gt; &lt;time&gt;, so it can be put back by moving them into SavedGames.
+    /// Refuses to remove the only profile. Returns where the files went.
+    /// </summary>
+    public string DeleteProfile()
+    {
+        if (Profiles.Count(p => !string.Equals(p, Profile, StringComparison.OrdinalIgnoreCase)) == 0)
+            throw new InvalidOperationException($"{Profile} is the only RBR profile; the game needs at least one.");
+        var files = ProfileFiles();
+        if (files.Count == 0) throw new FileNotFoundException($"There are no files for the profile {Profile} in SavedGames.");
+
+        string target = System.IO.Path.Combine(AppSettings.DataDir, "DeletedProfiles", $"{Profile} {DateTime.Now:yyyy-MM-dd HHmmss}");
+        Directory.CreateDirectory(target);
+        var done = new List<(string From, string To)>();
+        try
+        {
+            foreach (var f in files)
+            {
+                string to = System.IO.Path.Combine(target, System.IO.Path.GetFileName(f));
+                File.Move(f, to);
+                done.Add((f, to));
+                Log.Info(Log.Context, $"Moved {f} out of the game", new[] { $"Kept in {to}" });
+            }
+        }
+        catch (Exception ex)
+        {
+            Undo(done, $"Deleting the profile {Profile} failed ({ex.Message}); put its files back");
+            throw;
+        }
+        return target;
     }
 
     /// <summary>Names of RBR / RSF launcher processes currently running (writing files under them is unsafe).</summary>

@@ -95,7 +95,7 @@ public sealed class RbrProfileFile
     public static void SetForceFeedbackStrength(string path, float value)
     {
         float strength = Math.Clamp(value, 0f, 1f);
-        Modify(path, file =>
+        Modify(path, $"In-game force feedback strength set to {strength:P0}", file =>
         {
             int gear = file.FindTag("GEAR", 1);
             if (gear < 0 || file.ForceFeedbackStrength is null)
@@ -112,7 +112,7 @@ public sealed class RbrProfileFile
     {
         if (name.Length is 0 or > MaxNameLength || name.Any(c => c is < ' ' or > '~'))
             throw new ArgumentException($"A profile name is 1 to {MaxNameLength} plain characters.", nameof(name));
-        Modify(path, file =>
+        Modify(path, $"Stored profile name set to {name}", file =>
         {
             int at = file.NameOffset;
             if (at < 0 || file.Name is null)
@@ -126,11 +126,13 @@ public sealed class RbrProfileFile
     /// Applies a change to the decoded profile and writes it back with a new checksum. Refuses a profile whose
     /// checksum doesn't verify (unknown encoding), and puts the file back if the written one doesn't read back.
     /// </summary>
-    private static void Modify(string path, Action<RbrProfileFile> change, Func<RbrProfileFile, bool> verify)
+    /// <param name="what">What changes, for the log.</param>
+    private static void Modify(string path, string what, Action<RbrProfileFile> change, Func<RbrProfileFile, bool> verify)
     {
         var file = Load(path);
         if (!file.ChecksumValid)
             throw new InvalidDataException("The RBR profile's checksum doesn't verify, so it isn't safe to change it here.");
+        string? oldName = file.Name;
         change(file);
 
         byte[] original = File.ReadAllBytes(path);
@@ -143,12 +145,15 @@ public sealed class RbrProfileFile
         }
 
         BitConverter.GetBytes(Checksum(file._plain)).CopyTo(file._plain, 0);
-        GameFiles.WriteInPlace(path, file.Encode());
+        GameFiles.WriteInPlace(path, file.Encode(), new[]
+        {
+            what, $"Profile in the file: {oldName ?? "unknown"}", $"Checksum recomputed: {BitConverter.ToUInt32(file._plain, 0):X8}",
+        });
 
         var check = Load(path);
         if (!check.ChecksumValid || !verify(check))
         {
-            GameFiles.WriteInPlace(path, original);
+            GameFiles.WriteInPlace(path, original, new[] { "Put back as it was: the rewritten file did not read back correctly" });
             throw new InvalidDataException("The rewritten RBR profile did not verify; the previous file was put back.");
         }
     }

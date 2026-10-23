@@ -10,6 +10,9 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
   the name stored inside it, so renaming the files by hand made the game write a second profile; the app now warns
   when the two don't match. Names follow RBR's limits (up to 15 letters, digits, `.` and `-`, case kept as typed) and can't repeat an
   existing profile, not even with different case (Windows would treat them as the same files).
+- **Delete an RBR profile** (Settings → RBR profile → Delete…), unless it is the only one: its `.rbr`, `.acm` and
+  season saves are moved to `%AppData%\RBRInputManager\DeletedProfiles` instead of erased, so it can be put back.
+  "Restore originals" no longer brings back the controls of a deleted profile on their own.
 - **Invert axes**: the Inverted column in Game controls is now a checkbox for each axis action (steering,
   throttle, brake, combined, handbrake, clutch). Changes are pending like binding edits and Save writes them to
   `input.ini` (backed up first). RBR keeps one flag per action, so it applies to every map. The live input

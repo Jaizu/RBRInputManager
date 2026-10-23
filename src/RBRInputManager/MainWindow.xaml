@@ -1302,6 +1302,7 @@
                             <StackPanel Orientation="Horizontal">
                                 <ComboBox x:Name="RbrProfileBox" MinWidth="170" SelectionChanged="RbrProfile_Changed"/>
                                 <ui:Button x:Name="RenameRbrProfileButton" Content="Rename…" Margin="8,0,0,0" Click="RenameRbrProfile_Click"/>
+                                <ui:Button x:Name="DeleteRbrProfileButton" Content="Delete…" Margin="8,0,0,0" Click="DeleteRbrProfile_Click"/>
                             </StackPanel>
                         </ui:CardControl>
 

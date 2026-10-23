@@ -66,6 +66,8 @@ public static class OriginalBackup
         }
         manifest.Files[i] = manifest.Files[i] with { RelativePath = newRelative };
         File.WriteAllText(ManifestPath(rbrRoot), JsonSerializer.Serialize(manifest, Json));
+        Log.Info(Log.Context, $"The original-files backup now restores {oldRelative} as {newRelative}",
+            new[] { $"Backup: {dir}" });
     }
 
     /// <summary>Creates the snapshot if this install has none yet. Returns the new manifest, or null if one already existed.</summary>
@@ -117,6 +119,14 @@ public static class OriginalBackup
             {
                 if (File.Exists(target))
                     warnings.Add($"{f.RelativePath} did not exist originally; left as is.");
+                continue;
+            }
+
+            // A profile deleted in the app stays deleted: its controls alone would only leave a stray file.
+            if (Path.GetExtension(target).Equals(".acm", StringComparison.OrdinalIgnoreCase) &&
+                !File.Exists(Path.ChangeExtension(target, ".rbr")))
+            {
+                warnings.Add($"{f.RelativePath} not restored: that RBR profile no longer exists.");
                 continue;
             }
 

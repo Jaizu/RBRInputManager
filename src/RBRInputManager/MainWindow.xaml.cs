@@ -177,6 +177,10 @@ public partial class MainWindow : FluentWindow
         RbrProfileBox.IsEnabled = _rbr.Profiles.Count > 1;
         _fillingProfiles = false;
         RenameRbrProfileButton.IsEnabled = File.Exists(_rbr.ProfileRbr);
+        // RBR needs at least one profile.
+        DeleteRbrProfileButton.IsEnabled = _rbr.Profiles.Count > 1;
+        DeleteRbrProfileButton.ToolTip = _rbr.Profiles.Count > 1 ? null : "The only RBR profile can't be deleted.";
+        ToolTipService.SetShowOnDisabled(DeleteRbrProfileButton, true);
         CheckStoredProfileName();
 
         // First time we see this install: keep a pristine copy before the app ever writes to it.
@@ -1895,6 +1899,29 @@ public partial class MainWindow : FluentWindow
             _settings.RbrProfile = newName;
             Open(_rbr.Root, $"RBR profile {oldName} renamed to {newName}");
             Report(LogArea.Settings, $"RBR profile {oldName} renamed to {newName}", renamed, LogLevel.Done);
+        });
+    }
+
+    private async void DeleteRbrProfile_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rbr is null || _rbr.Profiles.Count < 2 || !await EnsureGameClosed() || !await ConfirmDiscardEdits()) return;
+        string name = _rbr.Profile;
+        if (!await Confirm("Delete RBR profile?",
+                $"Delete the profile {name} from the game? Its options, controls and season saves go with it.\n\n" +
+                $"The files are moved to {Path.Combine(AppSettings.DataDir, "DeletedProfiles")} rather than erased, " +
+                "so the profile can be put back by moving them into SavedGames.", "Delete"))
+            return;
+
+        await Run(LogArea.Settings, $"Deleting the RBR profile {name}", () =>
+        {
+            string movedTo = _rbr.DeleteProfile();
+            _settings.RbrProfile = null;
+            Open(_rbr.Root, $"RBR profile {name} deleted");
+            Report(LogArea.Settings, $"RBR profile {name} deleted", new[]
+            {
+                $"Files moved to {movedTo}: {string.Join(", ", Directory.GetFiles(movedTo).Select(Path.GetFileName))}",
+                $"Now using {_rbr.Profile}",
+            }, LogLevel.Done);
         });
     }
 
