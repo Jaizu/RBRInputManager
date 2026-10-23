@@ -2,6 +2,14 @@
 
 All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Invert axes**: the Inverted column in Game controls is now a checkbox for each axis action (steering,
+  throttle, brake, combined, handbrake, clutch). Changes are pending like binding edits and Save writes them to
+  `input.ini` (backed up first). RBR keeps one flag per action, so it applies to every map. The live input
+  display follows the pending value.
+
 ## [0.4.0] - 2026-10-23
 
 ### Added

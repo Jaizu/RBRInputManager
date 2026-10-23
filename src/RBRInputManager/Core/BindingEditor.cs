@@ -3,8 +3,8 @@ using System.IO;
 namespace RBRInputManager.Core;
 
 /// <summary>
-/// Pending edits to the game bindings (pf&lt;PROFILE&gt;.acm) and the RBRControls binds. Nothing touches
-/// the game until <see cref="Save"/>, which backs up both files once and writes them together.
+/// Pending edits to the game bindings (pf&lt;PROFILE&gt;.acm), the axis invert flags (input.ini) and the
+/// RBRControls binds. Nothing touches the game until <see cref="Save"/>, which backs up the files and writes them together.
 /// </summary>
 public sealed class BindingEditor
 {
@@ -12,19 +12,23 @@ public sealed class BindingEditor
     private readonly List<ActionMap> _maps;
     private readonly Dictionary<string, string> _pluginOriginal;
     private readonly Dictionary<string, string> _pluginPending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _invertOriginal;
+    private readonly Dictionary<string, bool> _invertPending = new(StringComparer.OrdinalIgnoreCase);
 
-    public BindingEditor(ActionMapFile file, IReadOnlyDictionary<string, string> pluginBinds)
+    public BindingEditor(ActionMapFile file, IReadOnlyDictionary<string, string> pluginBinds, IReadOnlyDictionary<string, bool> inverted)
     {
         _file = file;
         _maps = file.Maps.ToList();
         _pluginOriginal = new(pluginBinds, StringComparer.OrdinalIgnoreCase);
+        _invertOriginal = new(inverted, StringComparer.OrdinalIgnoreCase);
     }
 
     public IReadOnlyList<ActionMap> Maps => _maps;
 
     public int ChangeCount =>
         _maps.Count(m => !SameBindings(m, _file.Maps[m.Index])) +
-        _pluginPending.Count(kv => !string.Equals(kv.Value, _pluginOriginal.GetValueOrDefault(kv.Key, ""), StringComparison.Ordinal));
+        _pluginPending.Count(kv => !string.Equals(kv.Value, _pluginOriginal.GetValueOrDefault(kv.Key, ""), StringComparison.Ordinal)) +
+        _invertPending.Keys.Count(IsInvertChanged);
 
     public bool IsDirty => ChangeCount > 0;
 
@@ -89,6 +93,24 @@ public sealed class BindingEditor
         return -1;
     }
 
+    // ------------------------------------------------------------ axis inversion (input.ini, shared by every map)
+
+    /// <summary>input.ini [Settings] flags such as InvertThrottleAxis, read as RBR does (only "true" inverts).</summary>
+    public static Dictionary<string, bool> LoadInverted(RbrInstallation rbr)
+    {
+        var input = IniFile.TryLoad(rbr.InputIni);
+        return RbrActions.All.Where(a => a.InvertKey is not null).Select(a => a.InvertKey!).Distinct()
+            .ToDictionary(k => k, k => string.Equals(input?.Get("Settings", k), "true", StringComparison.OrdinalIgnoreCase),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    public bool IsInverted(string key) =>
+        _invertPending.TryGetValue(key, out var v) ? v : _invertOriginal.GetValueOrDefault(key);
+
+    public bool IsInvertChanged(string key) => IsInverted(key) != _invertOriginal.GetValueOrDefault(key);
+
+    public void SetInverted(string key, bool inverted) => _invertPending[key] = inverted;
+
     // ------------------------------------------------------------ RBRControls
 
     public string PluginValue(string key) =>
@@ -119,7 +141,8 @@ public sealed class BindingEditor
         var pluginChanges = _pluginPending
             .Where(kv => !string.Equals(kv.Value, _pluginOriginal.GetValueOrDefault(kv.Key, ""), StringComparison.Ordinal))
             .ToList();
-        if (!acmChanged && pluginChanges.Count == 0) return null;
+        var invertChanges = _invertPending.Keys.Where(IsInvertChanged).ToList();
+        if (!acmChanged && pluginChanges.Count == 0 && invertChanges.Count == 0) return null;
 
         string? backup = null;
         if (acmChanged)
@@ -138,7 +161,13 @@ public sealed class BindingEditor
             backup = GameFiles.Backup(rbr, RbrInstallation.RbrControlsIniFile);
             GameFiles.SetIniValues(rbr.RbrControlsIni, pluginChanges.Select(kv => ("KeyBind", kv.Key, kv.Value)));
         }
+        if (invertChanges.Count > 0)
+        {
+            if (File.Exists(rbr.InputIni)) backup = GameFiles.Backup(rbr, RbrInstallation.InputIniFile);
+            GameFiles.SetIniValues(rbr.InputIni, invertChanges.Select(k => ("Settings", k, IsInverted(k) ? "true" : "false")));
+        }
         // Backups\<timestamp>\<relative path>: report the timestamp folder.
-        return Path.Combine(GameFiles.BackupsDir, Path.GetRelativePath(GameFiles.BackupsDir, backup!).Split(Path.DirectorySeparatorChar)[0]);
+        if (backup is null) return null;
+        return Path.Combine(GameFiles.BackupsDir, Path.GetRelativePath(GameFiles.BackupsDir, backup).Split(Path.DirectorySeparatorChar)[0]);
     }
 }

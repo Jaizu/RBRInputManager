@@ -20,7 +20,7 @@ namespace RBRInputManager;
 /// <summary>Drives the dot next to device names: green connected, orange seen this month, red missing.</summary>
 public enum LinkState { None, Ok, Recent, Missing }
 
-public sealed record GameBindingRow(int ActionId, int? BindingIndex, string Action, string Device, string Input, string Inverted,
+public sealed record GameBindingRow(int ActionId, int? BindingIndex, string Action, string Device, string Input, bool? Inverted,
     string Status, LinkState State, bool IsUnbound, bool IsChanged);
 public sealed record ProfileDeviceRow(string Group, string Index, string Device, string? VidPid, string Guid, string Status, LinkState State);
 public sealed record PluginBindingRow(string Key, string Page, string Function, string Device, string Input, string Trigger, string GameMode,
@@ -47,7 +47,6 @@ public partial class MainWindow : FluentWindow
     private bool _syncingProfileBox;
     private int _pageBeforeSettings = 1; // Game controls (tab 0 is Info)
     private readonly System.Windows.Threading.DispatcherTimer _liveTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
-    private HashSet<int> _invertedActions = new();
     private bool _ngpSecondaryGears;
 
     static MainWindow()
@@ -193,7 +192,8 @@ public partial class MainWindow : FluentWindow
         Try("Controls", LoadGameBindings);
         Try("RBRControls", LoadPlugin);
         if (_acm is not null)
-            _editor = new BindingEditor(_acm, _pluginDefs.ToDictionary(d => d.Key, d => d.RawBinding, StringComparer.OrdinalIgnoreCase));
+            _editor = new BindingEditor(_acm, _pluginDefs.ToDictionary(d => d.Key, d => d.RawBinding, StringComparer.OrdinalIgnoreCase),
+                BindingEditor.LoadInverted(_rbr));
         ShowMap((MapBox.SelectedItem as MapItem)?.Map);
         BuildPluginRows();
         UpdatePendingBar();
@@ -201,7 +201,6 @@ public partial class MainWindow : FluentWindow
         Try("Default profile", () => ProfileStore.EnsureDefault(_rbr, _devices));
         LoadProfiles();
         RestartMonitor();
-        LoadInvertedAxes();
 
         if (_devices.DirectInputError is not null)
             errors.Add($"DirectInput: {_devices.DirectInputError}");
@@ -251,7 +250,6 @@ public partial class MainWindow : FluentWindow
 
         var saved = map;
         map = _editor?.Maps[map.Index] ?? map; // show pending edits
-        var input = IniFile.TryLoad(_rbr!.InputIni);
         var devices = map.Devices.Select(_devices.Resolve).ToList();
         var indexed = map.Bindings.Select((b, i) => (b, i)).ToList();
 
@@ -260,13 +258,13 @@ public partial class MainWindow : FluentWindow
         foreach (var action in RbrActions.All.Select(a => RbrActions.Get(a.Id, secondaryGears)))
         {
             var binds = indexed.Where(x => x.b.ActionId == action.Id).ToList();
-            string inverted = action.InvertKey is null ? "" :
-                string.Equals(input?.Get("Settings", action.InvertKey), "true", StringComparison.OrdinalIgnoreCase) ? "Yes" : "No";
-            bool changed = _editor?.IsActionChanged(map.Index, action.Id) == true;
+            bool? inverted = action.InvertKey is null || _editor is null ? null : _editor.IsInverted(action.InvertKey);
+            bool changed = _editor?.IsActionChanged(map.Index, action.Id) == true ||
+                           (action.InvertKey is not null && _editor?.IsInvertChanged(action.InvertKey) == true);
 
             if (binds.Count == 0)
             {
-                rows.Add(new(action.Id, null, action.Name, "—", "Unbound", "", "", LinkState.None, true, changed));
+                rows.Add(new(action.Id, null, action.Name, "—", "Unbound", inverted, "", LinkState.None, true, changed));
                 continue;
             }
             foreach (var (b, i) in binds)
@@ -274,7 +272,7 @@ public partial class MainWindow : FluentWindow
         }
         // Bindings with action IDs outside the known table (e.g. added by plugins).
         foreach (var (b, i) in indexed.Where(x => x.b.ActionId >= RbrActions.All.Count))
-            rows.Add(BindingRow(RbrActions.Get(b.ActionId).Name, b, i, devices, "", false));
+            rows.Add(BindingRow(RbrActions.Get(b.ActionId).Name, b, i, devices, null, false));
 
         _gameRows = rows;
         ApplyGameFilter();
@@ -416,7 +414,7 @@ public partial class MainWindow : FluentWindow
         });
     }
 
-    private GameBindingRow BindingRow(string action, ActionBinding b, int index, List<DeviceInfo> devices, string inverted, bool changed)
+    private GameBindingRow BindingRow(string action, ActionBinding b, int index, List<DeviceInfo> devices, bool? inverted, bool changed)
     {
         if (b.DeviceIndex < 0 || b.DeviceIndex >= devices.Count)
             return new(b.ActionId, index, action, $"Invalid device index ({b.DeviceIndex})", $"0x{b.ObjectType:X8}", inverted, "The map has no device at this index",
@@ -495,6 +493,17 @@ public partial class MainWindow : FluentWindow
         _editor.Unbind(map, index);
         RefreshEdits();
         SetStatus($"{row.Action}: binding removed (not saved yet)");
+    }
+
+    private void InvertAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (RowOf<GameBindingRow>(sender) is not { } row || _editor is null || ShownMapIndex is not int map) return;
+        var action = RbrActions.Get(row.ActionId, RbrActions.HasSecondaryGears(_editor.Maps[map], _ngpSecondaryGears));
+        if (action.InvertKey is null) return;
+        bool inverted = !_editor.IsInverted(action.InvertKey);
+        _editor.SetInverted(action.InvertKey, inverted);
+        RefreshEdits();
+        SetStatus($"{action.Name}: axis {(inverted ? "inverted" : "not inverted")} (not saved yet)");
     }
 
     private void BindPlugin_Click(object sender, RoutedEventArgs e)
@@ -599,16 +608,6 @@ public partial class MainWindow : FluentWindow
 
     // ---------------------------------------------------------------- live input display
 
-    private void LoadInvertedAxes()
-    {
-        var input = IniFile.TryLoad(_rbr!.InputIni);
-        _invertedActions = RbrActions.All
-            .Where(a => a.InvertKey is not null &&
-                        string.Equals(input?.Get("Settings", a.InvertKey), "true", StringComparison.OrdinalIgnoreCase))
-            .Select(a => a.Id)
-            .ToHashSet();
-    }
-
     /// <summary>Shows what RBR would read: the active map's bindings (with pending edits) applied to the monitor's last poll.</summary>
     private void UpdateLiveInputs()
     {
@@ -621,6 +620,7 @@ public partial class MainWindow : FluentWindow
         }
         var map = _editor?.Maps[active.Index] ?? active;
         var monitor = _monitor!;
+        bool Inverted(int actionId) => RbrActions.Get(actionId).InvertKey is { } key && _editor?.IsInverted(key) == true;
 
         // Each bound input as 0..1 (axes after RBR's invert setting, buttons and keys 0 or 1); null when unbound.
         double? Level(int actionId, bool axesOnly = false)
@@ -637,7 +637,7 @@ public partial class MainWindow : FluentWindow
                     // RBR reads a pedal as pressed at the low end of its range unless inverted (pedals that
                     // rest at 0 need "invert"); steering and the combined axis are taken as they come.
                     if (actionId is not (0 or 4)) x = 1 - x;
-                    v = _invertedActions.Contains(actionId) ? 1 - x : x;
+                    v = Inverted(actionId) ? 1 - x : x;
                 }
                 else if (axesOnly) continue;
                 else v = monitor.IsDown(device, b.ObjectType) ? 1 : 0;

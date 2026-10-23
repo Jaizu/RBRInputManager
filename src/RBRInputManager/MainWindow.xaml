@@ -381,6 +381,17 @@
             </DataTemplate.Triggers>
         </DataTemplate>
 
+        <!-- RBR keeps one invert flag per axis action in input.ini, shared by every map and binding. -->
+        <DataTemplate x:Key="InvertCell">
+            <CheckBox x:Name="Box" IsChecked="{Binding Inverted, Mode=OneWay}" Click="InvertAction_Click" MinWidth="0"
+                      VerticalAlignment="Center" ToolTip="Invert this axis in RBR (input.ini). Applies to every map"/>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Inverted}" Value="{x:Null}">
+                    <Setter TargetName="Box" Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
         <DataTemplate x:Key="PluginEditCell">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <ui:Button Style="{StaticResource RowButton}" Content="Bind" Icon="{ui:SymbolIcon Edit20}" Click="BindPlugin_Click"
@@ -876,7 +887,7 @@
                                         <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="200"/>
                                         <DataGridTemplateColumn Header="Device" CellTemplate="{StaticResource DeviceCell}" Width="250"/>
                                         <DataGridTextColumn Header="Input" Binding="{Binding Input}" Width="*"/>
-                                        <DataGridTextColumn Header="Inverted" Binding="{Binding Inverted}" Width="80"/>
+                                        <DataGridTemplateColumn Header="Inverted" CellTemplate="{StaticResource InvertCell}" Width="80"/>
                                         <DataGridTemplateColumn Header="" CellTemplate="{StaticResource GameEditCell}" Width="150" CanUserResize="False"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
