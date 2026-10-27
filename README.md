@@ -56,6 +56,10 @@ Get `RBRInputManager.exe` from [Releases](https://github.com/Jaizu/RBRInputManag
 
 The app stores its data in `%AppData%\RBRInputManager` (settings, profiles, original-file backups, session logs in `Logs`).
 
+## Support
+
+If the app is useful to you, you can support it on [Ko-fi](https://ko-fi.com/jaizu) (also the **Donate** button at the bottom right of the app).
+
 ## Building
 
 Requires the .NET 8 SDK.
