@@ -5,9 +5,9 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
 ## [Unreleased]
 
 ### Added
-- **Save** button next to the current profile: keeps the changes (binding edits and anything changed in the game
-  files) in the selected profile. Unsaved binding edits are written to the game first. "Default" is never
-  overwritten, so saving from it (or with no profile picked) asks for a new profile name.
+- **Save** button (icon) next to the current profile: after a confirmation, keeps the changes (binding edits and
+  anything changed in the game files) in the selected profile, "Default" included. Unsaved binding edits are written
+  to the game first.
 
 ### Changed
 - The header's **Apply** button is now **Revert**, since all it did was write the profile back over the changes.

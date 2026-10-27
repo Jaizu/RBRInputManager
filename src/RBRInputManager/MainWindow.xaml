@@ -816,8 +816,10 @@
                     <!-- Save keeps the changes in the profile; Revert throws them away and writes the profile back.
                          The tooltips sit on wrappers: a disabled button shows none, and these are disabled most of the time. -->
                     <Border x:Name="SaveCurrentHost" Margin="8,0,0,0" Background="Transparent">
-                        <ui:Button x:Name="SaveCurrentButton" Content="Save" Appearance="Primary" Padding="12,7" IsEnabled="False"
-                                   Icon="{ui:SymbolIcon Save24}" Click="SaveCurrentProfile_Click"/>
+                        <ui:Button x:Name="SaveCurrentButton" Appearance="Primary" Padding="9,7" IsEnabled="False"
+                                   Click="SaveCurrentProfile_Click">
+                            <ui:SymbolIcon Symbol="Save24" FontSize="16"/>
+                        </ui:Button>
                     </Border>
                     <Border x:Name="ApplyCurrentHost" Margin="6,0,0,0" Background="Transparent">
                         <ui:Button x:Name="ApplyCurrentButton" Content="Revert" Padding="12,7" IsEnabled="False"

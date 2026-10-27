@@ -1334,15 +1334,12 @@ public partial class MainWindow : FluentWindow
                 : $"Unsaved changes to the bindings: Save keeps them in \"{current!.Name}\", Revert discards them";
         ProfileStateHost.Cursor = _profileModified ? Cursors.Hand : null;
 
-        // With no profile picked, Save still works: it asks for a name.
-        SaveCurrentButton.IsEnabled = _rbr is not null && (changed || current is null);
-        SaveCurrentHost.ToolTip = current is null
-            ? "Save: keep the current setup as a new profile"
-            : !changed
-                ? $"Save: nothing to do, the game files already match \"{current.Name}\""
-                : ProfileStore.IsDefault(current)
-                    ? $"Save: \"{current.Name}\" is the original setup, so the changes are saved as a new profile"
-                    : $"Save: keep the changes in \"{current.Name}\"" + (edits ? " (the binding edits are written to the game too)" : "");
+        SaveCurrentButton.IsEnabled = changed;
+        SaveCurrentHost.ToolTip = changed
+            ? $"Save the changes to \"{current!.Name}\"" + (edits ? " (the binding edits are written to the game too)" : "")
+            : current is null
+                ? "Save: pick a profile first"
+                : $"Save: nothing to save, the game files already match \"{current.Name}\"";
         ApplyCurrentButton.IsEnabled = changed;
         ApplyCurrentHost.ToolTip = changed
             ? $"Revert: discard the changes and go back to \"{current!.Name}\""
@@ -1390,21 +1387,20 @@ public partial class MainWindow : FluentWindow
         await Run(LogArea.Profiles, $"Reverting to the profile \"{p.Name}\"", () => ApplyProfile(p));
     }
 
-    /// <summary>
-    /// Header "Save": writes any binding edits to the game, then stores the game's setup in the current profile.
-    /// "Default" (the original setup) and no profile at all ask for a name and save a new profile instead.
-    /// </summary>
-    private async void SaveCurrentProfile_Click(object sender, RoutedEventArgs e)
-    {
-        if (_rbr is null || _devices is null) return;
-        var current = CurrentProfileBox.SelectedItem as InputProfile;
-        string? name = current is not null && !ProfileStore.IsDefault(current) ? current.Name : await AskNewProfileName(current);
-        if (name is null) return;
-        if (!string.Equals(name, current?.Name, StringComparison.CurrentCultureIgnoreCase) && ProfileStore.Exists(name) &&
-            !await Confirm("Overwrite profile?", $"A profile called \"{name}\" already exists. Replace it with the current setup?", "Overwrite"))
-            return;
+    private async void SaveCurrentProfile_Click(object sender, RoutedEventArgs e) => await SaveCurrentProfile(confirm: true);
 
+    /// <summary>Header "Save": writes any binding edits to the game, then stores the game's setup in the current profile.</summary>
+    private async Task SaveCurrentProfile(bool confirm)
+    {
+        if (_rbr is null || _devices is null || CurrentProfileBox.SelectedItem is not InputProfile p) return;
+        string name = p.Name;
         bool edits = _editor?.IsDirty == true;
+        if (confirm && !await Confirm("Save profile?",
+                $"Replace \"{name}\" with the current setup?" +
+                (edits ? $" The {Plural(_editor!.ChangeCount, "unsaved change")} to the bindings are written to the game first (backed up)." : "") +
+                (ProfileStore.IsDefault(p) ? "\n\nThe original game files stay recoverable from Settings → Restore originals." : ""),
+                "Save"))
+            return;
         if (edits && !await EnsureGameClosed()) return;
         var changes = edits ? PendingChanges() : new List<ProfileDifference>();
         await Run(LogArea.Profiles, $"Saving the profile \"{name}\"", () =>
@@ -1418,56 +1414,21 @@ public partial class MainWindow : FluentWindow
 
             // What the save changes in the profile (old → new); not knowing it doesn't stop the save.
             var diffs = new List<string>();
-            var existing = ProfileStore.LoadAll().FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.CurrentCultureIgnoreCase));
-            if (existing is not null)
-                try
-                {
-                    diffs = ProfileStore.Differences(_rbr, existing, g => _devices!.Resolve(g).Name, InputText, _ngpSecondaryGears)
-                        .Select(d => $"{d.Area} · {d.Item}: {OneLine(d.Profile)} → {OneLine(d.Game)}").ToList();
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn(LogArea.Profiles, $"Could not compare the profile \"{name}\" with the game files before saving it", new[] { ex.Message });
-                }
+            try
+            {
+                diffs = ProfileStore.Differences(_rbr, p, g => _devices!.Resolve(g).Name, InputText, _ngpSecondaryGears)
+                    .Select(d => $"{d.Area} · {d.Item}: {OneLine(d.Profile)} → {OneLine(d.Game)}").ToList();
+            }
+            catch (Exception ex)
+            {
+                Log.Warn(LogArea.Profiles, $"Could not compare the profile \"{name}\" with the game files before saving it", new[] { ex.Message });
+            }
 
             var saved = ProfileStore.SaveCurrent(_rbr, name, _devices!);
             SetCurrentProfile(name);
             LoadProfiles();
-            Report(LogArea.Profiles, existing is null ? $"Profile \"{name}\" saved" : $"Profile \"{name}\" updated with the current setup",
-                diffs.Concat(ProfileDetails(saved)), LogLevel.Done);
+            Report(LogArea.Profiles, $"Profile \"{name}\" updated with the current setup", diffs.Concat(ProfileDetails(saved)), LogLevel.Done);
         });
-    }
-
-    /// <summary>Asks for the name of a new profile; null when cancelled.</summary>
-    private async Task<string?> AskNewProfileName(InputProfile? current)
-    {
-        var box = new Wpf.Ui.Controls.TextBox { Margin = new Thickness(0, 12, 0, 0), PlaceholderText = "Profile name" };
-        var problem = new System.Windows.Controls.TextBlock { Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap };
-        problem.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "SystemFillColorCriticalBrush");
-        var content = new StackPanel { Width = 360 };
-        content.Children.Add(new System.Windows.Controls.TextBlock
-        {
-            TextWrapping = TextWrapping.Wrap,
-            Text = current is null
-                ? "Save the current setup (bindings, axis inversion, RBRControls binds and force feedback) as a new profile."
-                : $"\"{current.Name}\" holds the original game setup and is never overwritten. Save the current setup as a new profile.",
-        });
-        content.Children.Add(box);
-        content.Children.Add(problem);
-
-        var dialog = new MessageBox { Title = "Save as new profile", Content = content, PrimaryButtonText = "Save", CloseButtonText = "Cancel" };
-        void Validate()
-        {
-            string name = box.Text.Trim();
-            problem.Text = string.Equals(name, ProfileStore.DefaultName, StringComparison.CurrentCultureIgnoreCase)
-                ? $"\"{ProfileStore.DefaultName}\" is the original game setup. Pick another name."
-                : "";
-            dialog.IsPrimaryButtonEnabled = name.Length > 0 && problem.Text.Length == 0;
-        }
-        box.TextChanged += (_, _) => Validate();
-        box.Loaded += (_, _) => box.Focus();
-        Validate();
-        return await dialog.ShowDialogAsync() == MessageBoxResult.Primary ? box.Text.Trim() : null;
     }
 
     /// <summary>The caution icon: lists what the game files hold differently from the current profile.</summary>
@@ -1509,7 +1470,7 @@ public partial class MainWindow : FluentWindow
             await Run(LogArea.Profiles, $"Applying the profile \"{p.Name}\"", () => ApplyProfile(p));
         }
         else if (choice == MessageBoxResult.Primary)
-            SaveCurrentProfile_Click(sender, e);
+            await SaveCurrentProfile(confirm: false);
     }
 
     /// <summary>What a profile holds and where, for the log.</summary>
