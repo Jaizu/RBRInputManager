@@ -155,6 +155,10 @@ public partial class MainWindow : FluentWindow
         _settings.Save();
 
         InstallText.Text = $"Richard Burns Rally · {root}";
+        LaunchGameButton.IsEnabled = _rbr.GameExe is not null;
+        LaunchGameHost.ToolTip = _rbr.GameExe is { } exe
+            ? $"Play: start {System.IO.Path.GetFileName(exe)}"
+            : "Play: no RichardBurnsRally exe found in this install";
         string which = _rbr.Profiles.Count switch
         {
             0 => "not created yet",
@@ -253,7 +257,8 @@ public partial class MainWindow : FluentWindow
             if (ProfileStore.EnsureDefault(_rbr, _devices) && !hadDefault)
                 Log.Done(LogArea.Profiles, $"Created the \"{ProfileStore.DefaultName}\" profile from the original game files");
         });
-        LoadProfiles();
+        // The game files were just read: follow them to the profile they hold.
+        LoadProfiles(adoptMatching: true);
         RestartMonitor();
 
         if (_devices.DirectInputError is not null)
@@ -1258,34 +1263,45 @@ public partial class MainWindow : FluentWindow
 
     // ---------------------------------------------------------------- profiles
 
-    private void LoadProfiles()
+    /// <param name="adoptMatching">When the game files no longer hold the recorded profile, switch to one they hold exactly.</param>
+    private void LoadProfiles(bool adoptMatching = false)
     {
         var profiles = ProfileStore.LoadAll();
         ProfileList.ItemsSource = profiles;
         NoProfilesText.Visibility = profiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ProfileCountText.Text = $"({Plural(profiles.Count, "profile")})";
         UpdateProfileButtons();
-        RefreshCurrentProfile(profiles);
+        RefreshCurrentProfile(profiles, adoptMatching);
     }
 
     /// <summary>Header selector: the current profile and whether the game still matches it.</summary>
-    private void RefreshCurrentProfile(List<InputProfile>? profiles = null)
+    private void RefreshCurrentProfile(List<InputProfile>? profiles = null, bool adoptMatching = false)
     {
         profiles ??= ProfileStore.LoadAll();
         var current = profiles.FirstOrDefault(p => string.Equals(p.Name, _settings.CurrentProfile, StringComparison.CurrentCultureIgnoreCase));
-        if (current is null && _rbr is not null)
+        if (_rbr is not null && (current is null || (adoptMatching && !Matches(current))))
         {
-            // Nothing recorded (or it was deleted): adopt a profile the game already matches exactly. Read-only.
-            current = profiles.FirstOrDefault(p =>
+            // Nothing recorded (or deleted), or the game now holds another profile: adopt one the game matches exactly,
+            // a saved one before "Default". Read-only; with no match the recorded profile stays (shown as changed).
+            var match = profiles.OrderBy(p => ProfileStore.IsDefault(p)).FirstOrDefault(p => p != current && Matches(p));
+            if (match is not null)
             {
-                try { return ProfileStore.MatchesGame(_rbr, p); }
-                catch (Exception ex)
-                {
-                    Log.WarnOnce($"match:{p.Name}", LogArea.Profiles, $"Could not compare the profile \"{p.Name}\" with the game files", ex);
-                    return false;
-                }
-            });
-            if (current is not null) SetCurrentProfile(current.Name);
+                if (current is not null)
+                    Log.Info(LogArea.Profiles, $"Current profile: \"{match.Name}\" (the game files match it)",
+                        new[] { $"Was \"{current.Name}\", which the game files no longer match" });
+                current = match;
+                SetCurrentProfile(current.Name);
+            }
+        }
+
+        bool Matches(InputProfile p)
+        {
+            try { return ProfileStore.MatchesGame(_rbr!, p); }
+            catch (Exception ex)
+            {
+                Log.WarnOnce($"match:{p.Name}", LogArea.Profiles, $"Could not compare the profile \"{p.Name}\" with the game files", ex);
+                return false;
+            }
         }
 
         _syncingProfileBox = true;
@@ -2031,6 +2047,44 @@ public partial class MainWindow : FluentWindow
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /// <summary>Starts the game; unsaved binding edits are saved to the game first or left out, as the user picks.</summary>
+    private async void LaunchGame_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rbr?.GameExe is not { } exe) return;
+        var running = RbrInstallation.RunningGameProcesses();
+        if (running.Count > 0)
+        {
+            await Info("Already running", $"These are running: {string.Join(", ", running)}.");
+            return;
+        }
+        if (_editor?.IsDirty == true)
+        {
+            var choice = await Ask("Unsaved changes",
+                $"You have {Plural(_editor.ChangeCount, "unsaved change")} to the bindings. The game only sees what is saved.",
+                "Save to game and play", "Play without them");
+            if (choice == MessageBoxResult.None) return;
+            if (choice == MessageBoxResult.Primary)
+            {
+                var changes = PendingChanges();
+                var area = EditArea(changes);
+                bool saved = false;
+                await Run(area, "Saving the changes to the game", () =>
+                {
+                    string? backup = _editor.Save(_rbr);
+                    LogChanges(LogLevel.Done, count => $"Saved {Plural(count, "change")} to the game", changes, backup);
+                    Reload();
+                    saved = true;
+                });
+                if (!saved) return;
+            }
+        }
+        await Run(LogArea.General, "Starting the game", () =>
+        {
+            Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = _rbr.Root, UseShellExecute = true });
+            Report(LogArea.General, $"Started {System.IO.Path.GetFileName(exe)}", new[] { exe });
+        });
+    }
 
     private async Task<bool> EnsureGameClosed()
     {

@@ -207,6 +207,11 @@ public sealed class RbrInstallation
         return target;
     }
 
+    /// <summary>The game's executable (the SSE build RSF installs first); null when none is there.</summary>
+    public string? GameExe =>
+        new[] { "RichardBurnsRally_SSE.exe", "RichardBurnsRally.exe", "RichardBurnsRally_NoSSE.exe" }
+            .Select(Path).FirstOrDefault(File.Exists);
+
     /// <summary>Names of RBR / RSF launcher processes currently running (writing files under them is unsafe).</summary>
     public static IReadOnlyList<string> RunningGameProcesses()
     {

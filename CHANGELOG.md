@@ -8,8 +8,12 @@ All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](
 - **Save** button (icon) next to the current profile: after a confirmation, keeps the changes (binding edits and
   anything changed in the game files) in the selected profile, "Default" included. Unsaved binding edits are written
   to the game first.
+- **Play** button (icon) before the tabs: starts `RichardBurnsRally_SSE.exe` from the install. With unsaved binding edits
+  it asks whether to save them to the game first.
 
 ### Changed
+- On start and after reading the game files again, the current profile follows the game: if the files no longer
+  match the recorded profile but match another one exactly, that one is selected (a saved profile before "Default").
 - The header's **Apply** button is now **Revert**, since all it did was write the profile back over the changes.
   The caution icon also turns on for unsaved binding edits, and its dialog offers Save to profile / Revert to profile.
 - Gear up/down (game) and RBRControls Sequential up/down now say "upshift" / "downshift", so it's clear they mean the

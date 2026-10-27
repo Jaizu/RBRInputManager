@@ -848,7 +848,43 @@
         <!-- Tab headers only; the pages below stay built so switching is instant and keeps their state. -->
         <DockPanel Grid.Row="3" Margin="16,10,16,0">
         <Grid DockPanel.Dock="Top">
-        <TabControl x:Name="Tabs" Style="{StaticResource HudTabs}" SelectionChanged="Tabs_SelectionChanged">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <!-- Starts the game: drawn as a tab chip (same size as the Info tab) in the accent colour. The tooltip sits on
+             a wrapper so it still shows while the button is disabled. -->
+        <Border x:Name="LaunchGameHost" Background="Transparent" VerticalAlignment="Center" Margin="0,0,8,0">
+            <Button x:Name="LaunchGameButton" IsEnabled="False" Click="LaunchGame_Click" Cursor="Hand"
+                    Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chip" Background="{DynamicResource AccentFillColorDefaultBrush}" BorderBrush="#30FFFFFF"
+                                BorderThickness="2" CornerRadius="3" Padding="14,8">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource AccentFillColorSecondaryBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource AccentFillColorTertiaryBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Chip" Property="Background" Value="#E0383838"/>
+                                <Setter Property="Foreground" Value="#60FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+                <StackPanel Orientation="Horizontal">
+                    <ui:SymbolIcon Symbol="Play24" Filled="True"/>
+                    <!-- Empty title: keeps the chip as tall as the tabs. -->
+                    <TextBlock Style="{StaticResource TabTitle}" Width="0"/>
+                </StackPanel>
+            </Button>
+        </Border>
+        <TabControl x:Name="Tabs" Grid.Column="1" Style="{StaticResource HudTabs}" SelectionChanged="Tabs_SelectionChanged">
             <!-- ============================================================ Info (icon only) -->
             <TabItem x:Name="InfoTab" ToolTip="How this app works">
                 <TabItem.Header>
@@ -917,7 +953,7 @@
                 </TabItem.Header>
             </TabItem>
         </TabControl>
-        <local:InputDisplay x:Name="LiveInputs" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,0,2"/>
+        <local:InputDisplay x:Name="LiveInputs" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,0,2"/>
         </Grid>
         <Grid x:Name="Pages">
             <Border x:Name="InfoPage" Visibility="Collapsed">
