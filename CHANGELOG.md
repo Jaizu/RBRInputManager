@@ -2,6 +2,19 @@
 
 All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Save** button next to the current profile: keeps the changes (binding edits and anything changed in the game
+  files) in the selected profile. Unsaved binding edits are written to the game first. "Default" is never
+  overwritten, so saving from it (or with no profile picked) asks for a new profile name.
+
+### Changed
+- The header's **Apply** button is now **Revert**, since all it did was write the profile back over the changes.
+  The caution icon also turns on for unsaved binding edits, and its dialog offers Save to profile / Revert to profile.
+- Gear up/down (game) and RBRControls Sequential up/down now say "upshift" / "downshift", so it's clear they mean the
+  same thing (the plugin's Sequential Up shifts up a gear; it is not the lever's direction).
+
 ## [0.5.0] - 2026-10-23
 
 ### Added

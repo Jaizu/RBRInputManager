@@ -813,10 +813,15 @@
                             </Border>
                         </StackPanel>
                     </Border>
-                    <!-- The tooltip sits on a wrapper: a disabled button shows none, and this one is disabled most of the time. -->
-                    <Border x:Name="ApplyCurrentHost" Margin="8,0,0,0" Background="Transparent">
-                        <ui:Button x:Name="ApplyCurrentButton" Content="Apply" Appearance="Primary" Padding="12,7" IsEnabled="False"
-                                   Icon="{ui:SymbolIcon Play24}" Click="ApplyCurrentProfile_Click"/>
+                    <!-- Save keeps the changes in the profile; Revert throws them away and writes the profile back.
+                         The tooltips sit on wrappers: a disabled button shows none, and these are disabled most of the time. -->
+                    <Border x:Name="SaveCurrentHost" Margin="8,0,0,0" Background="Transparent">
+                        <ui:Button x:Name="SaveCurrentButton" Content="Save" Appearance="Primary" Padding="12,7" IsEnabled="False"
+                                   Icon="{ui:SymbolIcon Save24}" Click="SaveCurrentProfile_Click"/>
+                    </Border>
+                    <Border x:Name="ApplyCurrentHost" Margin="6,0,0,0" Background="Transparent">
+                        <ui:Button x:Name="ApplyCurrentButton" Content="Revert" Padding="12,7" IsEnabled="False"
+                                   Icon="{ui:SymbolIcon ArrowUndo24}" Click="ApplyCurrentProfile_Click"/>
                     </Border>
                     <ui:Button x:Name="ReloadButton" Margin="6,0,0,0" Padding="9,7" Click="Reload_Click"
                                ToolTip="Reload: read the bindings and controllers again from the game files">
