@@ -22,8 +22,8 @@ public static class RbrActions
         new(4,  "ACCELERATE_AND_BRAKE", "Throttle + brake (combined)",  true,  "InvertCombinedAxis"),
         new(5,  "BRAKE",                "Brake",                        true,  "InvertBrakeAxis"),
         new(6,  "HANDBRAKE",            "Handbrake",                    true,  "InvertHandbrakeAxis"),
-        new(7,  "GEARUP",               "Gear up",                      false, null),
-        new(8,  "GEARDWN",              "Gear down",                    false, null),
+        new(7,  "GEARUP",               "Gear up (upshift)",            false, null),
+        new(8,  "GEARDWN",              "Gear down (downshift)",        false, null),
         new(9,  "CH_CAM",               "Change camera",                false, null),
         new(10, "PAUSE",                "Pause",                        false, null),
         new(11, "CLUTCH",               "Clutch",                       true,  "InvertClutchAxis"),
@@ -46,8 +46,8 @@ public static class RbrActions
     /// pair of gear up/down controls while an analog steering axis is bound. RBR's control screen then shows them
     /// as "Gear Up (Secondary)" / "Gear Down (Secondary)" in place of Left / Right.
     /// </summary>
-    public static readonly RbrAction SecondaryGearUp = new(1, "LEFT", "Gear up (secondary)", false, null);
-    public static readonly RbrAction SecondaryGearDown = new(2, "RIGHT", "Gear down (secondary)", false, null);
+    public static readonly RbrAction SecondaryGearUp = new(1, "LEFT", "Gear up (upshift, secondary)", false, null);
+    public static readonly RbrAction SecondaryGearDown = new(2, "RIGHT", "Gear down (downshift, secondary)", false, null);
 
     /// <summary>True when RBR (with NGPCarMenu's option on) reads Left/Right of this map as secondary gear controls.</summary>
     public static bool HasSecondaryGears(ActionMap map, bool pluginEnabled) =>
