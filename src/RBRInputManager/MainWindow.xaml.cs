@@ -1759,6 +1759,9 @@ public partial class MainWindow : FluentWindow
         Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
     }
 
+    private void Donate_Click(object sender, RoutedEventArgs e) =>
+        Process.Start(new ProcessStartInfo("https://ko-fi.com/jaizu") { UseShellExecute = true });
+
     private void Hyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
     {
         Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
