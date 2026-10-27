@@ -16,6 +16,7 @@ RBR stores controller bindings by DirectInput *instance GUID*. When Windows give
 - **Invert axes** with the checkbox in the Inverted column (steering, throttle, brake, combined, handbrake, clutch).
 - **Secondary gear up/down**: with NGPCarMenu's `SecondaryGearUpDownControls` on, the Steer left / Steer right slots are shown and bound as Gear Up / Gear Down (Secondary), like RBR's own control screen.
 - **Pending changes**: edits stay pending until **Save to game**, which checks RBR and the RSF launcher are closed, backs up the files, writes them and reads them back to verify. The "N CHANGES" button lists every edit before saving.
+- Gear up/down and RBRControls' sequential up/down are labelled upshift/downshift: both shift a gear up or down (not the lever's direction).
 - **Find by pressing**: with the app in front, press any input to jump to where it is bound.
 - **Live input display** next to the tabs, styled after RBR's input HUD: steering wheel plus clutch, brake, throttle and handbrake bars, following the active map (including unsaved edits).
 
@@ -28,7 +29,9 @@ RBR stores controller bindings by DirectInput *instance GUID*. When Windows give
 
 ### Profiles
 - Save the current bindings, axis inversion, RBRControls binds and FFB as a named profile. A built-in **Default** profile holds the original game setup.
-- The header selector shows whether the game files match the selected profile (✓) or differ from it (⚠); **Apply** writes it to the game. Click the warning to see every value that differs, then apply the profile or update it with the game's setup.
+- The header selector shows whether the game files match the selected profile (✓) or differ from it, or there are unsaved binding edits (⚠). Click the warning to see every value that differs.
+- **Save** (disk icon) keeps the changes in the selected profile, writing any unsaved binding edits to the game first; **Revert** throws them away and writes the profile back to the game.
+- On start, and whenever the game files are read again, the selector follows the game: if the files match another profile exactly, that one is selected.
 
 ### RBR profiles
 - The app uses the most recently played RBR profile, or the one picked in **Settings → RBR profile**.
@@ -38,6 +41,9 @@ RBR stores controller bindings by DirectInput *instance GUID*. When Windows give
 - **Original files backup**: the first time the app opens an install, it copies the files it can modify, along with their permissions, attributes and timestamps. **Settings → Restore originals** puts them back. Every write is backed up first.
 - **Logs** tab: what the app read and changed (controllers and maps found, each binding edit as before → after, files written or backed up, settings, profiles, update checks, errors and crashes), for one page or all of them, in this session or one of the last 20, which are kept as readable text files. **Copy** puts the entries on the clipboard with the app and Windows versions, for bug reports.
 - **Updates**: checks GitHub releases on startup and can update itself.
+
+### Play
+- The ▶ chip before the tabs starts the game (`RichardBurnsRally_SSE.exe`), offering to save unsaved binding edits first.
 
 ### Look
 - Windows 11 (Fluent / Mica) look with light and dark themes, collapsible sections and resizable columns. The window reopens at its last position and size.

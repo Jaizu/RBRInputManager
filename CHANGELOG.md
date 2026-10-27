@@ -2,7 +2,7 @@
 
 All notable changes to RBR Input Manager. Versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-27
 
 ### Added
 - **Save** button (icon) next to the current profile: after a confirmation, keeps the changes (binding edits and
@@ -150,6 +150,7 @@ First release.
 - Self-updater from GitHub releases.
 - Light and dark theme.
 
+[0.6.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Jaizu/RBRInputManager/compare/v0.2.0...v0.3.0
